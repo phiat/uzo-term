@@ -3,5 +3,20 @@
 .dolt/
 *.db
 
-# Beads / Dolt files (added by bd init)
+# Beads issue tracker (local-only)
+.beads/
 .beads-credential-key
+
+# Agent instructions (local-only)
+AGENTS.md
+
+# Build artifacts
+uzo-term_bin
+test_struct
+*.o
+*.a
+*.so
+*.dylib
+
+# Bundled fonts (download separately — see README)
+fonts/

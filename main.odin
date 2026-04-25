@@ -237,14 +237,9 @@ main :: proc() {
 // ---------------------------------------------------------------------------
 
 pump_pty :: proc() {
-	total := 0
-	for total < len(read_buf) {
-		n := p.read_bytes(&pty, read_buf[total:])
-		if n <= 0 do break
-		total += n
-	}
-	if total > 0 {
-		gvt.terminal_vt_write(term, raw_data(read_buf[:total]), c.size_t(total))
+	data, _ := p.drain(&pty, read_buf[:])
+	if len(data) > 0 {
+		gvt.terminal_vt_write(term, raw_data(data), c.size_t(len(data)))
 		trigger_glitch()
 	}
 }

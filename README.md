@@ -40,12 +40,29 @@ Available params: `shake-duration`, `shake-intensity`, `trail-fade`, `gravity-ra
 
 ## Build
 
-Requires Odin (nightly), Zig, and raylib.
+Requires Odin (nightly), Zig 0.15.2 (pinned in `.mise.toml`), raylib, and
+a clone of [ghosdin](https://github.com/phiat/ghosdin) as a sibling
+directory (`../ghosdin`) — uzo-term reuses its libghostty-vt build and
+its `pty/` + `vendor/ghostty_vt/` packages.
 
 ```
+git clone https://github.com/phiat/ghosdin.git ../ghosdin
 just build    # build libghostty-vt + uzo-term
 just run      # build + run
 just check    # type-check only
+```
+
+### Fonts
+
+uzo-term prefers JetBrains Mono Nerd Font and falls back through several
+system paths (DejaVu Sans Mono, raylib default). To use the preferred
+font without installing it system-wide, drop the TTFs into a local
+`fonts/` directory (gitignored):
+
+```
+mkdir -p fonts
+curl -L -o fonts/JetBrainsMonoNerdFont-Regular.ttf \
+  https://github.com/ryanoasis/nerd-fonts/raw/master/patched-fonts/JetBrainsMono/Ligatures/Regular/JetBrainsMonoNerdFont-Regular.ttf
 ```
 
 ## Project structure
