@@ -1,5 +1,9 @@
 # uzo-term
 
+<p align="center">
+  <img src="docs/media/uzo-term-demo.gif" alt="uzo-term demo" width="720">
+</p>
+
 A graphical terminal emulator with visual effects, built on [ghostty-vt](https://github.com/ghostty-org/ghostty) + [raylib](https://www.raylib.com/) in [Odin](https://odin-lang.org/).
 
 Everything renders to a RenderTexture2D first, then composites through a post-processing shader pass. A 3D camera draws a background scene of animated wireframe cubes; the terminal is overlaid in 2D with transparency.
