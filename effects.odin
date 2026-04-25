@@ -411,11 +411,12 @@ draw_cd_labels :: proc() {
 			if depth < 0.5 do continue // too close, skip
 			sz := i32(clamp(350.0 / depth, 10, 48))
 
-			tw := rl.MeasureText(label, sz)
-			sx := i32(screen.x) - tw / 2
-			sy := i32(screen.y) - sz / 2
+			fsz := f32(sz)
+			tw := rl.MeasureTextEx(font, label, fsz, 1).x
+			pos := rl.Vector2{screen.x - tw * 0.5, screen.y - fsz * 0.5}
 
-			rl.DrawText(label, sx, sy, sz, {cfg.fg_color.r, cfg.fg_color.g, cfg.fg_color.b, alpha})
+			rl.DrawTextEx(font, label, pos, fsz, 1,
+				{cfg.fg_color.r, cfg.fg_color.g, cfg.fg_color.b, alpha})
 		}
 	}
 }
@@ -650,6 +651,7 @@ draw_exit_drip :: proc() {
 	if strip_w < 1 do strip_w = 1
 
 	rl.BeginDrawing()
+	defer rl.EndDrawing()
 	rl.ClearBackground({0, 0, 0, 0xff})
 
 	for i in 0 ..< exit_strip_count {
@@ -683,6 +685,4 @@ draw_exit_drip :: proc() {
 		sub_alpha := u8(80 + pulse * 80)
 		rl.DrawText(sub, (window_w - sw) / 2, ty + 75, sub_sz, {0x80, 0x80, 0x80, sub_alpha})
 	}
-
-	rl.EndDrawing()
 }

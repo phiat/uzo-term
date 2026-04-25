@@ -12,6 +12,7 @@ import "core:c"
 import "core:fmt"
 import "core:math"
 import p "ghosdin:pty"
+import r "ghosdin:render_rl"
 import gvt "ghosdin:vendor/ghostty_vt"
 import rl "vendor:raylib"
 
@@ -37,13 +38,11 @@ FONT_SIZE_MAX :: 40
 // State
 // ---------------------------------------------------------------------------
 
-term: gvt.Terminal
-render_state: gvt.Render_State
-row_iter: gvt.Render_State_Row_Iterator
-row_cells: gvt.Render_State_Row_Cells
-pty: p.Pty
-font: rl.Font
-read_buf: [65536]u8
+gterm:         gvt.Term
+pty:           p.Pty
+font:          rl.Font
+read_buf:      [65536]u8
+session_ended: bool
 
 
 // Font scaling state
@@ -85,38 +84,33 @@ main :: proc() {
 	init_config()
 	parse_config_args()
 
-	// -- Init ghostty-vt terminal --
-	opts := gvt.Terminal_Options {
-		cols           = TERM_COLS,
-		rows           = TERM_ROWS,
-		max_scrollback = MAX_SCROLLBACK,
-	}
-	if gvt.terminal_new(nil, &term, opts) != .SUCCESS {
-		fmt.eprintln("Failed to create terminal")
+	// -- Init ghostty-vt terminal (wrapper handles render-state alloc + teardown atomically) --
+	t, terr := gvt.term_init(TERM_COLS, TERM_ROWS, MAX_SCROLLBACK)
+	if terr != .None {
+		fmt.eprintln("Failed to create terminal:", terr)
 		return
 	}
-	defer gvt.terminal_free(term)
+	gterm = t
+	defer gvt.term_destroy(&gterm)
 
 	// Install write_pty callback
 	write_pty_cb :: proc "c" (
-		terminal: gvt.Terminal,
+		_terminal: gvt.Terminal,
 		userdata: rawptr,
 		data: [^]u8,
-		len: c.size_t,
+		length: c.size_t,
 	) {
 		context = #force_no_inline runtime.default_context()
 		pt := cast(^p.Pty)userdata
-		p.write_bytes(pt, data[:len])
+		p.write_bytes(pt, data[:length])
 	}
-	// Callbacks passed directly as function pointers (not pointer-to-pointer).
-	// The C API: "value is passed directly for pointer types (callbacks, userdata)"
-	gvt.terminal_set(term, .WRITE_PTY, rawptr(write_pty_cb))
-	gvt.terminal_set(term, .USERDATA, rawptr(&pty))
+	gvt.term_set(&gterm, .WRITE_PTY, rawptr(write_pty_cb))
+	gvt.term_set(&gterm, .USERDATA, rawptr(&pty))
 
 	// Device attributes callback — vim sends CSI c to query this
 	da_cb :: proc "c" (
-		terminal: gvt.Terminal,
-		userdata: rawptr,
+		_terminal: gvt.Terminal,
+		_userdata: rawptr,
 		out_attrs: ^gvt.Device_Attributes,
 	) -> bool {
 		out_attrs.primary.conformance_level = 4 // VT400
@@ -127,12 +121,12 @@ main :: proc() {
 		out_attrs.tertiary.unit_id = 0
 		return true
 	}
-	gvt.terminal_set(term, .DEVICE_ATTRIBUTES, rawptr(da_cb))
+	gvt.term_set(&gterm, .DEVICE_ATTRIBUTES, rawptr(da_cb))
 
 	// Size callback — vim sends CSI 14/18 t to query terminal size
 	size_cb :: proc "c" (
-		terminal: gvt.Terminal,
-		userdata: rawptr,
+		_terminal: gvt.Terminal,
+		_userdata: rawptr,
 		out_size: ^gvt.Size_Report_Size,
 	) -> bool {
 		out_size.rows = TERM_ROWS
@@ -141,26 +135,12 @@ main :: proc() {
 		out_size.cell_height = u32(cell_h)
 		return true
 	}
-	gvt.terminal_set(term, .SIZE, rawptr(size_cb))
+	gvt.term_set(&gterm, .SIZE, rawptr(size_cb))
 
-	// -- Init render state --
-	if gvt.render_state_new(nil, &render_state) != .SUCCESS {
-		fmt.eprintln("Failed to create render state")
+	if rerr := gvt.term_ensure_render(&gterm); rerr != .None {
+		fmt.eprintln("Failed to allocate render state:", rerr)
 		return
 	}
-	defer gvt.render_state_free(render_state)
-
-	if gvt.render_state_row_iterator_new(nil, &row_iter) != .SUCCESS {
-		fmt.eprintln("Failed to create row iterator")
-		return
-	}
-	defer gvt.render_state_row_iterator_free(row_iter)
-
-	if gvt.render_state_row_cells_new(nil, &row_cells) != .SUCCESS {
-		fmt.eprintln("Failed to create row cells")
-		return
-	}
-	defer gvt.render_state_row_cells_free(row_cells)
 
 	// -- Spawn PTY --
 	shell := p.get_default_shell()
@@ -237,11 +217,13 @@ main :: proc() {
 // ---------------------------------------------------------------------------
 
 pump_pty :: proc() {
-	data, _ := p.drain(&pty, read_buf[:])
+	if session_ended do return
+	data, eof := p.drain(&pty, read_buf[:])
 	if len(data) > 0 {
-		gvt.terminal_vt_write(term, raw_data(data), c.size_t(len(data)))
+		gvt.term_write_bytes(&gterm, data)
 		trigger_glitch()
 	}
+	if eof do session_ended = true
 }
 
 // ---------------------------------------------------------------------------
@@ -253,7 +235,7 @@ handle_input :: proc() {
 		ch := rl.GetCharPressed()
 		if ch == 0 do break
 		buf: [4]u8
-		n := encode_utf8(buf[:], ch)
+		n := r.encode_utf8(buf[:], ch)
 		p.write_bytes(&pty, buf[:n])
 		on_keypress_rhythm()
 		reset_idle()
@@ -292,112 +274,68 @@ handle_input :: proc() {
 			}
 		}
 
-		seq: string
-		#partial switch key {
-		case .ENTER:
+		// Enter has uzo-term-specific side effects (effects + command detection)
+		// before the VT sequence is sent; keep that case inline.
+		if key == .ENTER {
 			trigger_shake()
 			trigger_explosion()
 			reset_idle()
-			line := string(input_line[:input_line_len])
-			if contains(line, "sudo") {
-				on_sudo_detected()
-			} else if len(line) > 0 {
-				// Only clear sudo vignette on a real command, not empty Enter
-				on_sudo_cleared()
-			}
-			// cd detection — use rendered cursor row so tab-completed paths work
-			if len(line) >= 2 && line[:2] == "cd" {
-				dir := "~"
-				// Search the rendered cursor row for "cd " to get the full path
-				row_text := string(cursor_row_buf[:cursor_row_len])
-				cd_pos := -1
-				for i in 0 ..= max(0, len(row_text) - 3) {
-					if row_text[i:i + 3] == "cd " {
-						cd_pos = i + 3
-					}
-				}
-				if cd_pos >= 0 && cd_pos < len(row_text) {
-					// Trim trailing spaces
-					end := len(row_text)
-					for end > cd_pos && row_text[end - 1] == ' ' do end -= 1
-					if end > cd_pos do dir = row_text[cd_pos:end]
-				} else if len(line) > 3 {
-					dir = line[3:] // fallback to input_line
-				}
-				trigger_cd_fly(dir)
-			}
-			// ls detection: "ls" alone or followed by a space/flags
-			if len(line) >= 2 && line[:2] == "ls" && (len(line) == 2 || line[2] == ' ') {
-				trigger_ls()
-			}
-			// exit detection
-			if line == "exit" {
-				trigger_exit()
-			}
+			handle_command_line()
 			input_line_len = 0
-			seq = "\r"
-		case .BACKSPACE:
-			if input_line_len > 0 do input_line_len -= 1
-			seq = "\x7f"
-		case .TAB:
-			seq = "\t"
-		case .ESCAPE:
-			seq = "\x1b"
-		case .UP:
-			seq = "\x1b[A"
-		case .DOWN:
-			seq = "\x1b[B"
-		case .RIGHT:
-			seq = "\x1b[C"
-		case .LEFT:
-			seq = "\x1b[D"
-		case .HOME:
-			seq = "\x1b[H"
-		case .END:
-			seq = "\x1b[F"
-		case .PAGE_UP:
-			seq = "\x1b[5~"
-		case .PAGE_DOWN:
-			seq = "\x1b[6~"
-		case .INSERT:
-			seq = "\x1b[2~"
-		case .DELETE:
-			seq = "\x1b[3~"
-		case .F1:
-			seq = "\x1bOP"
-		case .F2:
-			seq = "\x1bOQ"
-		case .F3:
-			seq = "\x1bOR"
-		case .F4:
-			seq = "\x1bOS"
-		case .F5:
-			seq = "\x1b[15~"
-		case .F6:
-			seq = "\x1b[17~"
-		case .F7:
-			seq = "\x1b[18~"
-		case .F8:
-			seq = "\x1b[19~"
-		case .F9:
-			seq = "\x1b[20~"
-		case .F10:
-			seq = "\x1b[21~"
-		case .F11:
-			seq = "\x1b[23~"
-		case .F12:
-			seq = "\x1b[24~"
-		case:
-			if ctrl {
-				ki := int(key)
-				if ki >= int(rl.KeyboardKey.A) && ki <= int(rl.KeyboardKey.Z) {
-					ctrl_byte := u8(ki - int(rl.KeyboardKey.A) + 1)
-					p.write_byte(&pty, ctrl_byte)
-				}
-			}
+			p.write_string(&pty, "\r")
 			continue
 		}
-		p.write_string(&pty, seq)
+		if key == .BACKSPACE {
+			if input_line_len > 0 do input_line_len -= 1
+			p.write_string(&pty, "\x7f")
+			continue
+		}
+
+		if seq := r.key_to_vt_sequence(key); seq != "" {
+			p.write_string(&pty, seq)
+			continue
+		}
+		if ctrl {
+			if b, ok := r.ctrl_byte(key); ok {
+				p.write_byte(&pty, b)
+			}
+		}
+	}
+}
+
+// Inspect the just-submitted input line for `sudo` / `cd` / `ls` / `exit`
+// triggers before clearing the buffer. Pulled out of `handle_input` so the
+// switch above stays focused on key→VT-sequence mapping.
+handle_command_line :: proc() {
+	line := string(input_line[:input_line_len])
+	if contains(line, "sudo") {
+		on_sudo_detected()
+	} else if len(line) > 0 {
+		on_sudo_cleared()
+	}
+	if len(line) >= 2 && line[:2] == "cd" {
+		dir := "~"
+		row_text := string(cursor_row_buf[:cursor_row_len])
+		cd_pos := -1
+		for i in 0 ..= max(0, len(row_text) - 3) {
+			if row_text[i:i + 3] == "cd " {
+				cd_pos = i + 3
+			}
+		}
+		if cd_pos >= 0 && cd_pos < len(row_text) {
+			end := len(row_text)
+			for end > cd_pos && row_text[end - 1] == ' ' do end -= 1
+			if end > cd_pos do dir = row_text[cd_pos:end]
+		} else if len(line) > 3 {
+			dir = line[3:]
+		}
+		trigger_cd_fly(dir)
+	}
+	if len(line) >= 2 && line[:2] == "ls" && (len(line) == 2 || line[2] == ' ') {
+		trigger_ls()
+	}
+	if line == "exit" {
+		trigger_exit()
 	}
 }
 
@@ -430,72 +368,59 @@ draw_frame :: proc() {
 	rl.DrawRectangle(0, 0, window_w, window_h, {cfg.term_bg.r, cfg.term_bg.g, cfg.term_bg.b, term_bg_alpha})
 
 	// Update render state — bail to just the background if it fails
-	if gvt.render_state_update(render_state, term) != .SUCCESS {
+	if gvt.term_render_update(&gterm) != .None {
 		rl.EndTextureMode()
 		draw_pass2(elapsed)
 		return
 	}
 
-	colors := gvt.Render_State_Colors {
-		size = size_of(gvt.Render_State_Colors),
-	}
-	gvt.render_state_colors_get(render_state, &colors)
-
-	cursor_visible: bool
-	cursor_x, cursor_y: u16
-	cursor_in_viewport: bool
-	gvt.render_state_get(render_state, .CURSOR_VISIBLE, &cursor_visible)
-	gvt.render_state_get(render_state, .CURSOR_VIEWPORT_HAS_VALUE, &cursor_in_viewport)
-	gvt.render_state_get(render_state, .CURSOR_VIEWPORT_X, &cursor_x)
-	gvt.render_state_get(render_state, .CURSOR_VIEWPORT_Y, &cursor_y)
+	colors, _ := gvt.term_render_colors(&gterm)
+	cursor := gvt.term_render_cursor(&gterm)
 
 	// Expose cursor state to effects
-	cursor_x_g = cursor_x
-	cursor_y_g = cursor_y
-	cursor_visible_g = cursor_visible && cursor_in_viewport
+	cursor_x_g = cursor.x
+	cursor_y_g = cursor.y
+	cursor_visible_g = cursor.visible && cursor.in_viewport
 
-	// Terminal cells — guard each row/cell access
+	// Terminal cells — iterate rows + cells via the wrapper, fetch per-row
+	// dirty flags directly from the underlying iterator handle.
 	cursor_row_len = 0
-	if gvt.render_state_get(render_state, .ROW_ITERATOR, &row_iter) == .SUCCESS {
-		row_idx: u16 = 0
-		for gvt.render_state_row_iterator_next(row_iter) {
-			// Track which rows have fresh content for line age decay
-			dirty_row: bool
-			if gvt.render_state_row_get(row_iter, .DIRTY, &dirty_row) == .SUCCESS && dirty_row {
-				mark_row_born(row_idx)
-				mark_ls_row(row_idx)
-			}
-			if gvt.render_state_row_get(row_iter, .CELLS, &row_cells) == .SUCCESS {
-				col_idx: u16 = 0
-				for gvt.render_state_row_cells_next(row_cells) {
-					// Capture cursor row text for command detection
-					if row_idx == cursor_y && cursor_row_len < len(cursor_row_buf) - 1 {
-						raw: gvt.Cell
-						if gvt.render_state_row_cells_get(row_cells, .RAW, &raw) == .SUCCESS {
-							has: bool
-							cp: u32
-							gvt.cell_get(raw, .HAS_TEXT, &has)
-							if has {
-								gvt.cell_get(raw, .CODEPOINT, &cp)
-								if cp >= 32 && cp < 128 {
-									cursor_row_buf[cursor_row_len] = u8(cp)
-									cursor_row_len += 1
-								}
-							}
+	row_iter_h := gvt.term_row_iterator(&gterm)
+	row_cells_h := gvt.term_row_cells_handle(&gterm)
+	row_it := gvt.term_render_rows(&gterm)
+	for row in gvt.render_row_next(&row_it) {
+		dirty_row: bool
+		if gvt.render_state_row_get(row_iter_h, .DIRTY, &dirty_row) == .SUCCESS && dirty_row {
+			mark_row_born(row)
+			mark_ls_row(row)
+		}
+		col_idx: u16 = 0
+		for gvt.render_state_row_cells_next(row_cells_h) {
+			// Capture cursor row text for command detection
+			if row == cursor.y && cursor_row_len < len(cursor_row_buf) - 1 {
+				raw: gvt.Cell
+				if gvt.render_state_row_cells_get(row_cells_h, .RAW, &raw) == .SUCCESS {
+					has: bool
+					cp: u32
+					gvt.cell_get(raw, .HAS_TEXT, &has)
+					if has {
+						gvt.cell_get(raw, .CODEPOINT, &cp)
+						if cp >= 32 && cp < 128 {
+							cursor_row_buf[cursor_row_len] = u8(cp)
+							cursor_row_len += 1
 						}
 					}
-					draw_cell(col_idx, row_idx, &colors)
-					col_idx += 1
 				}
 			}
-			row_idx += 1
+			draw_cell(col_idx, row, row_cells_h, &colors)
+			col_idx += 1
 		}
 	}
 
 	// Cursor
-	if cursor_visible && cursor_in_viewport {
-		cx := f32(cursor_x) * f32(cell_w) + PADDING
-		cy := f32(cursor_y) * f32(cell_h) + PADDING
+	if cursor_visible_g {
+		cx := f32(cursor.x) * f32(cell_w) + PADDING
+		cy := f32(cursor.y) * f32(cell_h) + PADDING
 		rl.DrawRectangle(i32(cx), i32(cy), cell_w, cell_h, cfg.cursor_color)
 	}
 
@@ -507,15 +432,7 @@ draw_frame :: proc() {
 	update_draw_particles()
 	draw_sudo_vignette()
 
-	// Clear dirty flags
-	dirty_false := gvt.Render_State_Dirty.FALSE
-	gvt.render_state_set(render_state, .DIRTY, &dirty_false)
-	if gvt.render_state_get(render_state, .ROW_ITERATOR, &row_iter) == .SUCCESS {
-		for gvt.render_state_row_iterator_next(row_iter) {
-			dirty_val := false
-			gvt.render_state_row_set(row_iter, .DIRTY, &dirty_val)
-		}
-	}
+	gvt.term_render_clean(&gterm)
 
 	rl.EndTextureMode()
 
@@ -577,7 +494,7 @@ draw_3d_scene :: proc(t: f32) {
 // Cell Rendering
 // ---------------------------------------------------------------------------
 
-draw_cell :: proc(col: u16, row: u16, colors: ^gvt.Render_State_Colors) {
+draw_cell :: proc(col: u16, row: u16, row_cells_h: gvt.Render_State_Row_Cells, colors: ^gvt.Render_State_Colors) {
 	base_x := f32(col) * f32(cell_w) + PADDING
 	base_y := f32(row) * f32(cell_h) + PADDING
 	// Gravity well + idle drift + ls race-in all offset text; background stays on grid
@@ -588,12 +505,12 @@ draw_cell :: proc(col: u16, row: u16, colors: ^gvt.Render_State_Colors) {
 	py := base_y + gy + iy
 
 	bg_rgb: gvt.Color_Rgb
-	if gvt.render_state_row_cells_get(row_cells, .BG_COLOR, &bg_rgb) == .SUCCESS {
-		rl.DrawRectangle(i32(base_x), i32(base_y), cell_w, cell_h, to_rl_color(bg_rgb))
+	if gvt.render_state_row_cells_get(row_cells_h, .BG_COLOR, &bg_rgb) == .SUCCESS {
+		rl.DrawRectangle(i32(base_x), i32(base_y), cell_w, cell_h, r.to_rl_color(bg_rgb))
 	}
 
 	raw_cell: gvt.Cell
-	if gvt.render_state_row_cells_get(row_cells, .RAW, &raw_cell) != .SUCCESS do return
+	if gvt.render_state_row_cells_get(row_cells_h, .RAW, &raw_cell) != .SUCCESS do return
 
 	has_text: bool
 	if gvt.cell_get(raw_cell, .HAS_TEXT, &has_text) != .SUCCESS do return
@@ -605,17 +522,17 @@ draw_cell :: proc(col: u16, row: u16, colors: ^gvt.Render_State_Colors) {
 
 	fg_rgb: gvt.Color_Rgb
 	fg_color: rl.Color
-	if gvt.render_state_row_cells_get(row_cells, .FG_COLOR, &fg_rgb) == .SUCCESS {
-		fg_color = to_rl_color(fg_rgb)
+	if gvt.render_state_row_cells_get(row_cells_h, .FG_COLOR, &fg_rgb) == .SUCCESS {
+		fg_color = r.to_rl_color(fg_rgb)
 	} else if colors.foreground.r != 0 || colors.foreground.g != 0 || colors.foreground.b != 0 {
-		fg_color = to_rl_color(colors.foreground)
+		fg_color = r.to_rl_color(colors.foreground)
 	} else {
 		fg_color = cfg.fg_color
 	}
 
 	style: gvt.Style
 	style.size = size_of(gvt.Style)
-	if gvt.render_state_row_cells_get(row_cells, .STYLE, &style) == .SUCCESS {
+	if gvt.render_state_row_cells_get(row_cells_h, .STYLE, &style) == .SUCCESS {
 		if style.bold {
 			fg_color.r = u8(min(255, int(fg_color.r) + 40))
 			fg_color.g = u8(min(255, int(fg_color.g) + 40))
@@ -723,29 +640,6 @@ contains :: proc(s, sub: string) -> bool {
 	return false
 }
 
-to_rl_color :: proc(c: gvt.Color_Rgb) -> rl.Color {
-	return {c.r, c.g, c.b, 0xff}
-}
-
-encode_utf8 :: proc(buf: []u8, cp: rune) -> int {
-	v := u32(cp)
-	if v < 0x80 {
-		buf[0] = u8(v)
-		return 1
-	} else if v < 0x800 {
-		buf[0] = u8(0xC0 | (v >> 6))
-		buf[1] = u8(0x80 | (v & 0x3F))
-		return 2
-	} else if v < 0x10000 {
-		buf[0] = u8(0xE0 | (v >> 12))
-		buf[1] = u8(0x80 | ((v >> 6) & 0x3F))
-		buf[2] = u8(0x80 | (v & 0x3F))
-		return 3
-	} else {
-		buf[0] = u8(0xF0 | (v >> 18))
-		buf[1] = u8(0x80 | ((v >> 12) & 0x3F))
-		buf[2] = u8(0x80 | ((v >> 6) & 0x3F))
-		buf[3] = u8(0x80 | (v & 0x3F))
-		return 4
-	}
-}
+// Color and UTF-8 helpers now live in `ghosdin:render_rl` (`r.to_rl_color`,
+// `r.encode_utf8`); local copies were removed to keep the helpers in one
+// place.
