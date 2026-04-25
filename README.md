@@ -1,5 +1,12 @@
 # uzo-term
 
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+[![Odin](https://img.shields.io/badge/odin-nightly-orange.svg)](https://odin-lang.org/)
+[![Zig](https://img.shields.io/badge/zig-0.15.2-f7a41d.svg)](https://ziglang.org/)
+[![raylib](https://img.shields.io/badge/raylib-5.5-white.svg)](https://www.raylib.com/)
+[![Built on ghosdin](https://img.shields.io/badge/built%20on-ghosdin-7a5cff.svg)](https://github.com/phiat/ghosdin)
+[![Platform](https://img.shields.io/badge/platform-linux-lightgrey.svg)](#)
+
 <p align="center">
   <img src="docs/media/uzo-term-demo.gif" alt="uzo-term demo" width="720">
 </p>
