@@ -873,10 +873,13 @@ update_draw_rising :: proc() {
 			radius := p.radius_base * (0.55 + 0.45 * t)
 			rl.DrawCircleV(p.pos, radius, {r, g, b, a})
 		case .SMOKE:
-			grey := u8(55 + 35.0 * t)
-			a := u8(150.0 * t * t)
+			// Light blue-grey so the plume reads against a dark bg.
+			r := u8(170 + 50.0 * t)
+			g := u8(175 + 50.0 * t)
+			b := u8(190 + 50.0 * t)
+			a := u8(252.0 * t)
 			radius := p.radius_base * (1.0 + 1.4 * (1.0 - t))
-			rl.DrawCircleV(p.pos, radius, {grey, grey, grey, a})
+			rl.DrawCircleV(p.pos, radius, {r, g, b, a})
 		}
 
 		rising[new_count] = rising[i]
@@ -936,8 +939,8 @@ update_forge :: proc(dt: f32) {
 trigger_smoke :: proc() {
 	base_x := f32(cursor_x_g) * f32(cell_w) + f32(PADDING)
 	base_y := f32(cursor_y_g) * f32(cell_h) + f32(PADDING) + f32(cell_h) / 2
-	for _ in 0 ..< 24 {
-		x := base_x + (rand.float32() - 0.5) * f32(cell_w) * 4.0
+	for _ in 0 ..< 36 {
+		x := base_x + (rand.float32() - 0.5) * f32(cell_w) * 5.0
 		y := base_y + (rand.float32() - 0.5) * f32(cell_h)
 		emit_rising(.SMOKE, x, y)
 	}
