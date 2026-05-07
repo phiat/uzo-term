@@ -1060,42 +1060,21 @@ drum_dirty_rows: int // counter accumulated by main during cell iteration
 init_drum :: proc() {
 	drum_mesh = rl.GenMeshCylinder(cfg.drum_radius, cfg.drum_length, DRUM_SLICES)
 
-	// Reorient cylinder horizontally:
-	//   - Default GenMeshCylinder has axis along +Y, base at y=0.
-	//   - We rotate -90° around Z so axis points along +X, then translate so the
-	//     cylinder is centered on the world origin.
-	//   - UVs are swapped so TUI columns span the cylinder's length (along X)
-	//     and TUI rows wrap around the circumference. The new V is also flipped
-	//     because raylib RenderTextures are vertically inverted when sampled.
-	n := int(drum_mesh.vertexCount)
-	half := cfg.drum_length * 0.5
-	for i in 0 ..< n {
-		px := drum_mesh.vertices[i * 3 + 0]
-		py := drum_mesh.vertices[i * 3 + 1]
-		// (x, y) → (y, -x), then translate -half along X
-		drum_mesh.vertices[i * 3 + 0] = py - half
-		drum_mesh.vertices[i * 3 + 1] = -px
-
-		if drum_mesh.normals != nil {
-			nx := drum_mesh.normals[i * 3 + 0]
-			ny := drum_mesh.normals[i * 3 + 1]
-			drum_mesh.normals[i * 3 + 0] = ny
-			drum_mesh.normals[i * 3 + 1] = -nx
-		}
-
-		if drum_mesh.texcoords != nil {
-			u := drum_mesh.texcoords[i * 2 + 0]
-			v := drum_mesh.texcoords[i * 2 + 1]
-			drum_mesh.texcoords[i * 2 + 0] = v       // length axis = TUI cols
-			drum_mesh.texcoords[i * 2 + 1] = 1.0 - u // around circumference, flipped
-		}
-	}
-	rl.UpdateMeshBuffer(drum_mesh, 0, drum_mesh.vertices, i32(n) * 3 * size_of(f32), 0)
+	// Vertical cylinder (axis along +Y by default). Two UV flips:
+	//   - V flip: raylib RenderTextures are vertically inverted when sampled,
+	//     so without this the TUI appears upside-down (top at bottom).
+	//   - U flip: GenMeshCylinder parametrizes U around the circumference CCW
+	//     starting at +X. That puts U=0 on the cylinder's right-hand edge
+	//     (from the camera's view) — which would map TUI col 0 to the right
+	//     and the text would read mirror-image on the visible front face.
+	//     Flipping U puts col 0 on the cylinder's left edge.
 	if drum_mesh.texcoords != nil {
+		n := int(drum_mesh.vertexCount)
+		for i in 0 ..< n {
+			drum_mesh.texcoords[i * 2 + 0] = 1.0 - drum_mesh.texcoords[i * 2 + 0]
+			drum_mesh.texcoords[i * 2 + 1] = 1.0 - drum_mesh.texcoords[i * 2 + 1]
+		}
 		rl.UpdateMeshBuffer(drum_mesh, 1, drum_mesh.texcoords, i32(n) * 2 * size_of(f32), 0)
-	}
-	if drum_mesh.normals != nil {
-		rl.UpdateMeshBuffer(drum_mesh, 2, drum_mesh.normals, i32(n) * 3 * size_of(f32), 0)
 	}
 
 	drum_model = rl.LoadModelFromMesh(drum_mesh)
@@ -1148,6 +1127,7 @@ draw_drum_3d :: proc(term_tex: rl.Texture2D) {
 
 	a := u8(255.0 * drum_visible_alpha())
 	angle_deg := drum_angle * 180.0 / math.PI
-	// Mesh is already centered at origin; spin around its long (X) axis.
-	rl.DrawModelEx(drum_model, {0, 0, 0}, {1, 0, 0}, angle_deg, {1, 1, 1}, {255, 255, 255, a})
+	// GenMeshCylinder runs from y=0 to y=length; offset to center on origin.
+	pos := rl.Vector3{0, -cfg.drum_length * 0.5, 0}
+	rl.DrawModelEx(drum_model, pos, {0, 1, 0}, angle_deg, {1, 1, 1}, {255, 255, 255, a})
 }
