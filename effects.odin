@@ -1045,3 +1045,99 @@ whoosh_emit_cell :: proc(col, row: u16, row_cells_h: gvt.Render_State_Row_Cells)
 whoosh_consume :: proc() {
 	whoosh_pending = false
 }
+
+// ---------------------------------------------------------------------------
+// Spinning drum (alt-screen — TUI wraps around vertical cylinder)
+// ---------------------------------------------------------------------------
+//
+// While the alt-screen is active (htop, vim, less, …) the terminal lifts off
+// the flat plane and wraps around a vertical cylinder centered in the world.
+// Spin rate scales with smoothed dirty-row count (htop redraws fast → fast
+// spin; idle vim → glide). Tumbles in/out over ~0.45 s as the screen toggles.
+
+DRUM_RADIUS          :: f32(2.0)
+DRUM_HEIGHT          :: f32(4.5)
+DRUM_SLICES          :: i32(64)
+DRUM_TUMBLE_DURATION :: f32(0.45)
+DRUM_BASE_SPIN       :: f32(0.18)  // rad/s baseline
+DRUM_DENSITY_GAIN    :: f32(0.045) // rad/s per dirty-row/frame (smoothed)
+
+drum_mesh:    rl.Mesh
+drum_model:   rl.Model
+drum_loaded:  bool
+
+drum_t:        f32 = 0 // 0 = flat, 1 = drum
+drum_target_t: f32 = 0
+drum_angle:    f32 = 0
+drum_density:  f32 = 0
+drum_active:   bool
+
+drum_dirty_rows: int // counter accumulated by main during cell iteration
+
+init_drum :: proc() {
+	drum_mesh = rl.GenMeshCylinder(DRUM_RADIUS, DRUM_HEIGHT, DRUM_SLICES)
+
+	// Flip V on side faces: RenderTexture is upside-down when sampled, and the
+	// default cylinder UV maps V=0 to bottom. Flipping puts the top of the TUI
+	// at the top of the cylinder (where it should be).
+	if drum_mesh.texcoords != nil {
+		n := int(drum_mesh.vertexCount)
+		for i in 0 ..< n {
+			drum_mesh.texcoords[i * 2 + 1] = 1.0 - drum_mesh.texcoords[i * 2 + 1]
+		}
+		rl.UpdateMeshBuffer(drum_mesh, 1, drum_mesh.texcoords, i32(n) * 2 * size_of(f32), 0)
+	}
+
+	drum_model = rl.LoadModelFromMesh(drum_mesh)
+	drum_loaded = true
+}
+
+destroy_drum :: proc() {
+	if drum_loaded {
+		rl.UnloadModel(drum_model) // also frees mesh
+		drum_loaded = false
+	}
+}
+
+drum_set_alt :: proc(alt: bool) {
+	drum_target_t = alt ? 1.0 : 0.0
+}
+
+update_drum :: proc(dt: f32) {
+	rate := dt / DRUM_TUMBLE_DURATION
+	if drum_t < drum_target_t {
+		drum_t = min(drum_target_t, drum_t + rate)
+	} else if drum_t > drum_target_t {
+		drum_t = max(drum_target_t, drum_t - rate)
+	}
+	drum_active = drum_t > 0.001
+
+	target_density := f32(drum_dirty_rows)
+	drum_density += (target_density - drum_density) * min(dt * 3.5, 1.0)
+	drum_dirty_rows = 0
+
+	if drum_target_t > 0 {
+		spin_rate := DRUM_BASE_SPIN + drum_density * DRUM_DENSITY_GAIN
+		drum_angle += spin_rate * dt
+	}
+}
+
+drum_visible_alpha :: proc() -> f32 {
+	return ease_out_cubic(drum_t)
+}
+
+flat_visible_alpha :: proc() -> f32 {
+	return 1.0 - drum_visible_alpha()
+}
+
+draw_drum_3d :: proc(term_tex: rl.Texture2D) {
+	if !drum_active || !drum_loaded do return
+
+	// Rebind texture each frame (term_target may change on font resize).
+	drum_model.materials[0].maps[rl.MaterialMapIndex.ALBEDO].texture = term_tex
+
+	a := u8(255.0 * drum_visible_alpha())
+	angle_deg := drum_angle * 180.0 / math.PI
+	pos := rl.Vector3{0, -DRUM_HEIGHT * 0.5, 0} // center vertically at origin
+	rl.DrawModelEx(drum_model, pos, {0, 1, 0}, angle_deg, {1, 1, 1}, {255, 255, 255, a})
+}

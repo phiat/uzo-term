@@ -55,6 +55,7 @@ font_path: cstring // remember which path worked for reloads
 
 // Render-texture + shader state
 target: rl.RenderTexture2D
+term_target: rl.RenderTexture2D // terminal-only RT (texture source for the drum)
 shader: rl.Shader
 time_loc: rl.ShaderLocationIndex
 resolution_loc: rl.ShaderLocationIndex
@@ -165,9 +166,15 @@ main :: proc() {
 	load_font()
 	defer rl.UnloadFont(font)
 
-	// -- Render texture (everything draws here first) --
+	// -- Render textures (terminal first, then composite) --
 	target = rl.LoadRenderTexture(window_w, window_h)
 	defer rl.UnloadRenderTexture(target)
+	term_target = rl.LoadRenderTexture(window_w, window_h)
+	defer rl.UnloadRenderTexture(term_target)
+
+	// -- Drum mesh (cylinder for alt-screen TUI) --
+	init_drum()
+	defer destroy_drum()
 
 	// -- Post-processing shader --
 	shader = rl.LoadShader(nil, "shaders/shimmer.fs")
@@ -362,47 +369,39 @@ draw_frame :: proc() {
 	elapsed := f32(rl.GetTime())
 	elapsed_g = elapsed // shared with effects
 
+	dt := rl.GetFrameTime()
 	update_idle()
 	update_camera_fly()
-	update_pwd_tint(rl.GetFrameTime())
-	update_forge(rl.GetFrameTime())
-	update_shockwave(rl.GetFrameTime())
+	update_pwd_tint(dt)
+	update_forge(dt)
+	update_shockwave(dt)
 
-	// ── Pass 1: draw everything to render texture ──
-	rl.BeginTextureMode(target)
+	// Drum (alt-screen) tumble + spin
+	drum_set_alt(gvt.term_active_screen(&gterm) == .ALTERNATE)
+	update_drum(dt)
 
-	// 3D background
-	rl.ClearBackground(cfg.scene_bg)
-	rl.BeginMode3D(camera)
-	draw_3d_scene(elapsed)
-	rl.EndMode3D()
-
-	// Dir labels on cubes during cd fly (drawn in 2D using projected positions)
-	draw_cd_labels()
-
-	// 2D terminal overlay — fades out during cd fly so the 3D scene punches through
 	fly := cam_fly_intensity()
 	term_bg_alpha := u8(f32(cfg.term_bg.a) * (1.0 - fly * 0.92))
 	bg_tinted := pwd_tint(cfg.term_bg, PWD_TINT_BG)
+
+	// ── Pass 1a: render terminal cells to term_target (texture source for drum) ──
+	rl.BeginTextureMode(term_target)
+	rl.ClearBackground(rl.BLANK)
 	rl.DrawRectangle(0, 0, window_w, window_h, {bg_tinted.r, bg_tinted.g, bg_tinted.b, term_bg_alpha})
 
-	// Update render state — bail to just the background if it fails
 	if gvt.term_render_update(&gterm) != .None {
 		rl.EndTextureMode()
+		draw_pass1b(elapsed)
 		draw_pass2(elapsed)
 		return
 	}
 
 	colors, _ := gvt.term_render_colors(&gterm)
 	cursor := gvt.term_render_cursor(&gterm)
-
-	// Expose cursor state to effects
 	cursor_x_g = cursor.x
 	cursor_y_g = cursor.y
 	cursor_visible_g = cursor.visible && cursor.in_viewport
 
-	// Terminal cells — iterate rows + cells via the wrapper, fetch per-row
-	// dirty flags directly from the underlying iterator handle.
 	cursor_row_len = 0
 	row_iter_h := gvt.term_row_iterator(&gterm)
 	row_cells_h := gvt.term_row_cells_handle(&gterm)
@@ -412,10 +411,10 @@ draw_frame :: proc() {
 		if gvt.render_state_row_get(row_iter_h, .DIRTY, &dirty_row) == .SUCCESS && dirty_row {
 			mark_row_born(row)
 			mark_ls_row(row)
+			drum_dirty_rows += 1
 		}
 		col_idx: u16 = 0
 		for gvt.render_state_row_cells_next(row_cells_h) {
-			// Capture cursor row text for command detection
 			if row == cursor.y && cursor_row_len < len(cursor_row_buf) - 1 {
 				raw: gvt.Cell
 				if gvt.render_state_row_cells_get(row_cells_h, .RAW, &raw) == .SUCCESS {
@@ -438,27 +437,55 @@ draw_frame :: proc() {
 	}
 	whoosh_consume()
 
-	// Cursor
 	if cursor_visible_g {
 		cx := f32(cursor.x) * f32(cell_w) + PADDING
 		cy := f32(cursor.y) * f32(cell_h) + PADDING
 		rl.DrawRectangle(i32(cx), i32(cy), cell_w, cell_h, cfg.cursor_color)
 	}
 
-	// Effects drawn on top of terminal cells
 	update_glitch()
 	update_ls_anim()
 	draw_key_drops()
 	draw_cursor_trail()
 	update_draw_particles()
 	update_draw_rising()
-	draw_sudo_vignette()
 
 	gvt.term_render_clean(&gterm)
-
 	rl.EndTextureMode()
 
+	// ── Pass 1b: 3D scene + drum + flat term overlay → target ──
+	draw_pass1b(elapsed)
+
 	draw_pass2(elapsed)
+}
+
+// Composites the 3D scene, the drum (alt-screen), and the flat terminal
+// overlay onto `target`. Split out so the early-return path on render-update
+// failure can still produce a valid frame.
+draw_pass1b :: proc(elapsed: f32) {
+	rl.BeginTextureMode(target)
+	rl.ClearBackground(cfg.scene_bg)
+
+	rl.BeginMode3D(camera)
+	draw_3d_scene(elapsed)
+	draw_drum_3d(term_target.texture)
+	rl.EndMode3D()
+
+	draw_cd_labels()
+
+	// Flat terminal overlay — fades out as the drum tumbles in
+	flat_a := u8(255.0 * flat_visible_alpha())
+	if flat_a > 0 {
+		rl.DrawTextureRec(
+			term_target.texture,
+			{0, 0, f32(window_w), -f32(window_h)},
+			{0, 0},
+			{255, 255, 255, flat_a},
+		)
+	}
+
+	draw_sudo_vignette()
+	rl.EndTextureMode()
 }
 
 draw_pass2 :: proc(elapsed_in: f32) {
@@ -642,10 +669,12 @@ apply_font_size :: proc() {
 	rl.UnloadFont(font)
 	load_font()
 
-	// Resize window + render texture
+	// Resize window + render textures
 	rl.SetWindowSize(window_w, window_h)
 	rl.UnloadRenderTexture(target)
 	target = rl.LoadRenderTexture(window_w, window_h)
+	rl.UnloadRenderTexture(term_target)
+	term_target = rl.LoadRenderTexture(window_w, window_h)
 	update_resolution()
 }
 
