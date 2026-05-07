@@ -334,6 +334,12 @@ handle_input :: proc() {
 // switch above stays focused on key→VT-sequence mapping.
 handle_command_line :: proc() {
 	line := string(input_line[:input_line_len])
+	// History recall (Up-arrow) doesn't populate input_line, so fall back to
+	// the cursor row with the shell prompt stripped. Catches re-runs that
+	// would otherwise miss every command-detection trigger.
+	if input_line_len == 0 {
+		line = strip_prompt(string(cursor_row_buf[:cursor_row_len]))
+	}
 	if contains(line, "sudo") {
 		on_sudo_detected()
 	} else if len(line) > 0 {
@@ -799,6 +805,19 @@ open_url :: proc(url: string) {
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
+
+// Strip a shell prompt prefix by finding the last "$ " / "# " / "% " / "> ".
+// Returns the input unchanged if no prompt-looking suffix is found.
+strip_prompt :: proc(s: string) -> string {
+	for i := len(s) - 2; i >= 0; i -= 1 {
+		if s[i + 1] != ' ' do continue
+		c := s[i]
+		if c == '$' || c == '#' || c == '%' || c == '>' {
+			return s[i + 2:]
+		}
+	}
+	return s
+}
 
 contains :: proc(s, sub: string) -> bool {
 	if len(sub) > len(s) do return false
