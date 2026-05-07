@@ -382,7 +382,7 @@ draw_frame :: proc() {
 
 	fly := cam_fly_intensity()
 	term_bg_alpha := u8(f32(cfg.term_bg.a) * (1.0 - fly * 0.92))
-	bg_tinted := pwd_tint(cfg.term_bg, PWD_TINT_BG)
+	bg_tinted := pwd_tint(cfg.term_bg, cfg.pwd_tint_bg)
 
 	// ── Pass 1a: render terminal cells to term_target (texture source for drum) ──
 	rl.BeginTextureMode(term_target)
@@ -534,7 +534,7 @@ draw_3d_scene :: proc(t: f32) {
 			base_bright := f32(25 + int(15 * math.sin(t * 0.4 + f32(ix * iz) * 0.3)))
 			// During cd fly, cubes glow much brighter
 			bright := u8(base_bright + fly * (180.0 - base_bright))
-			color := pwd_tint(rl.Color{bright, bright, bright + 10, 0xff}, PWD_TINT_CUBE)
+			color := pwd_tint(rl.Color{bright, bright, bright + 10, 0xff}, cfg.pwd_tint_cube)
 
 			sz := 0.6 + fly * 0.3 // slightly larger during fly
 			rl.DrawCubeWires({x, y, z}, sz, sz, sz, color)

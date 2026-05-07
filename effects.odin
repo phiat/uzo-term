@@ -692,14 +692,12 @@ draw_exit_drip :: proc() {
 // Boot-up CRT power-on flash (one-shot)
 // ---------------------------------------------------------------------------
 
-BOOT_DURATION :: f32(0.85)
-
 boot_t:      f32 = 0
 boot_active: bool = true
 
 update_boot :: proc(dt: f32) {
 	if !boot_active do return
-	boot_t += dt / BOOT_DURATION
+	boot_t += dt / cfg.boot_duration
 	if boot_t >= 1.0 {
 		boot_t = 1.0
 		boot_active = false
@@ -754,10 +752,6 @@ ease_out_cubic :: proc(t: f32) -> f32 {
 // only fires for shells that emit it (zsh / bash with vte hooks / etc.); on
 // shells that don't, we just stay neutral.
 
-PWD_HUE_LERP_RATE :: f32(4.0) // higher = snappier transition on cd
-PWD_TINT_BG       :: f32(0.10) // strength of bg recolor (subtle)
-PWD_TINT_CUBE     :: f32(0.30) // strength of cube recolor (more visible)
-
 pwd_hue_target:  f32 = -1 // -1 = no PWD seen yet
 pwd_hue_current: f32 = 0
 pwd_last_hash:   u32 = 0
@@ -790,7 +784,7 @@ update_pwd_tint :: proc(dt: f32) {
 	diff := pwd_hue_target - pwd_hue_current
 	if diff > 180 do diff -= 360
 	else if diff < -180 do diff += 360
-	pwd_hue_current += diff * min(dt * PWD_HUE_LERP_RATE, 1.0)
+	pwd_hue_current += diff * min(dt * cfg.pwd_hue_lerp_rate, 1.0)
 	if pwd_hue_current < 0 do pwd_hue_current += 360
 	else if pwd_hue_current >= 360 do pwd_hue_current -= 360
 }
@@ -906,7 +900,6 @@ update_draw_rising :: proc() {
 // Forge sparks (build commands)
 // ---------------------------------------------------------------------------
 
-FORGE_DURATION :: f32(7.0)
 FORGE_FADE_IN  :: f32(0.5)
 FORGE_FADE_OUT :: f32(2.0)
 
@@ -921,7 +914,7 @@ trigger_forge :: proc() {
 forge_intensity :: proc() -> f32 {
 	if !forge_active do return 0
 	if forge_timer < FORGE_FADE_IN do return forge_timer / FORGE_FADE_IN
-	remaining := FORGE_DURATION - forge_timer
+	remaining := cfg.forge_duration - forge_timer
 	if remaining < FORGE_FADE_OUT do return max(0, remaining / FORGE_FADE_OUT)
 	return 1.0
 }
@@ -929,13 +922,13 @@ forge_intensity :: proc() -> f32 {
 update_forge :: proc(dt: f32) {
 	if !forge_active do return
 	forge_timer += dt
-	if forge_timer >= FORGE_DURATION {
+	if forge_timer >= cfg.forge_duration {
 		forge_active = false
 		return
 	}
 
 	// Emit embers from random x positions along the bottom edge.
-	emit_rate := 28.0 * forge_intensity()
+	emit_rate := cfg.forge_emit_rate * forge_intensity()
 	expected := emit_rate * dt
 	n := int(expected)
 	if rand.float32() < (expected - f32(n)) do n += 1
@@ -953,8 +946,8 @@ update_forge :: proc(dt: f32) {
 trigger_smoke :: proc() {
 	base_x := f32(cursor_x_g) * f32(cell_w) + f32(PADDING)
 	base_y := f32(cursor_y_g) * f32(cell_h) + f32(PADDING) + f32(cell_h) / 2
-	for _ in 0 ..< 36 {
-		x := base_x + (rand.float32() - 0.5) * f32(cell_w) * 5.0
+	for _ in 0 ..< cfg.smoke_count {
+		x := base_x + (rand.float32() - 0.5) * f32(cell_w) * cfg.smoke_spread
 		y := base_y + (rand.float32() - 0.5) * f32(cell_h)
 		emit_rising(.SMOKE, x, y)
 	}
@@ -963,11 +956,6 @@ trigger_smoke :: proc() {
 // ---------------------------------------------------------------------------
 // Enter shockwave (horizontal ripple sweeping downward from cursor row)
 // ---------------------------------------------------------------------------
-
-SHOCKWAVE_DURATION        :: f32(0.45)
-SHOCKWAVE_AMP_PX          :: f32(8.0)
-SHOCKWAVE_SIGMA_ROWS      :: f32(2.5)
-SHOCKWAVE_WAVELENGTH_ROWS :: f32(3.0)
 
 shockwave_t:         f32 = 1.0
 shockwave_start_row: i32 = 0
@@ -979,7 +967,7 @@ trigger_shockwave :: proc() {
 
 update_shockwave :: proc(dt: f32) {
 	if shockwave_t >= 1.0 do return
-	shockwave_t = min(1.0, shockwave_t + dt / SHOCKWAVE_DURATION)
+	shockwave_t = min(1.0, shockwave_t + dt / cfg.shockwave_duration)
 }
 
 // Returns horizontal pixel offset for `row` as the shock wave passes.
@@ -988,10 +976,10 @@ shockwave_offset :: proc(row: u16) -> f32 {
 	eased := ease_out_cubic(shockwave_t)
 	front := f32(shockwave_start_row) + eased * f32(TERM_ROWS)
 	d := f32(row) - front
-	sigma := SHOCKWAVE_SIGMA_ROWS
+	sigma := cfg.shockwave_sigma
 	envelope := math.exp(-(d * d) / (2 * sigma * sigma))
-	amp := SHOCKWAVE_AMP_PX * (1.0 - shockwave_t) * envelope
-	return amp * math.sin(d / SHOCKWAVE_WAVELENGTH_ROWS * 2 * math.PI)
+	amp := cfg.shockwave_amp * (1.0 - shockwave_t) * envelope
+	return amp * math.sin(d / cfg.shockwave_wavelength * 2 * math.PI)
 }
 
 // ---------------------------------------------------------------------------
@@ -1029,7 +1017,7 @@ whoosh_emit_cell :: proc(col, row: u16, row_cells_h: gvt.Render_State_Row_Cells)
 	dy := py - cy + (rand.float32() - 0.5) * 4.0
 	d := math.sqrt(dx * dx + dy * dy)
 	if d < 1 do d = 1
-	speed := 220.0 + rand.float32() * 280.0
+	speed := cfg.whoosh_speed_min + rand.float32() * (cfg.whoosh_speed_max - cfg.whoosh_speed_min)
 
 	p := &rising[rising_count]
 	rising_count += 1
@@ -1055,12 +1043,9 @@ whoosh_consume :: proc() {
 // Spin rate scales with smoothed dirty-row count (htop redraws fast → fast
 // spin; idle vim → glide). Tumbles in/out over ~0.45 s as the screen toggles.
 
-DRUM_RADIUS          :: f32(2.0)
-DRUM_HEIGHT          :: f32(4.5)
-DRUM_SLICES          :: i32(64)
-DRUM_TUMBLE_DURATION :: f32(0.45)
-DRUM_BASE_SPIN       :: f32(0.18)  // rad/s baseline
-DRUM_DENSITY_GAIN    :: f32(0.045) // rad/s per dirty-row/frame (smoothed)
+DRUM_RADIUS :: f32(2.0)
+DRUM_HEIGHT :: f32(4.5)
+DRUM_SLICES :: i32(64)
 
 drum_mesh:    rl.Mesh
 drum_model:   rl.Model
@@ -1104,7 +1089,7 @@ drum_set_alt :: proc(alt: bool) {
 }
 
 update_drum :: proc(dt: f32) {
-	rate := dt / DRUM_TUMBLE_DURATION
+	rate := dt / cfg.drum_tumble_duration
 	if drum_t < drum_target_t {
 		drum_t = min(drum_target_t, drum_t + rate)
 	} else if drum_t > drum_target_t {
@@ -1117,7 +1102,7 @@ update_drum :: proc(dt: f32) {
 	drum_dirty_rows = 0
 
 	if drum_target_t > 0 {
-		spin_rate := DRUM_BASE_SPIN + drum_density * DRUM_DENSITY_GAIN
+		spin_rate := cfg.drum_base_spin + drum_density * cfg.drum_density_gain
 		drum_angle += spin_rate * dt
 	}
 }
