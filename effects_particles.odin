@@ -1,17 +1,12 @@
 package uzo_term
 
-import "core:math"
 import "core:math/rand"
-import gvt "ghosdin:vendor/ghostty_vt"
 import rl "vendor:raylib"
 
-// Shared rising particle pool used by the forge (build commands), kill
-// smoke, the clear "whoosh-out", and the grep laser sparks. One pool keeps
-// the per-frame update loop simple and bounds the total particle budget.
-
-// ---------------------------------------------------------------------------
-// Pool
-// ---------------------------------------------------------------------------
+// Shared rising-particle pool used by the forge (build commands), kill
+// smoke, the clear "whoosh-out", and the grep laser sparks. One pool
+// keeps the per-frame update loop simple and bounds the total particle
+// budget. Per-effect emitters live in their own files.
 
 Rising_Kind :: enum {
 	EMBER,  // forge — bright orange spark rising fast
@@ -108,112 +103,4 @@ update_draw_rising :: proc() {
 		new_count += 1
 	}
 	rising_count = new_count
-}
-
-// ---------------------------------------------------------------------------
-// Forge sparks (build commands)
-// ---------------------------------------------------------------------------
-
-FORGE_FADE_IN  :: f32(0.5)
-FORGE_FADE_OUT :: f32(2.0)
-
-forge_timer:  f32 = 0
-forge_active: bool
-
-trigger_forge :: proc() {
-	forge_active = true
-	forge_timer = 0
-}
-
-forge_intensity :: proc() -> f32 {
-	if !forge_active do return 0
-	if forge_timer < FORGE_FADE_IN do return forge_timer / FORGE_FADE_IN
-	remaining := cfg.forge_duration - forge_timer
-	if remaining < FORGE_FADE_OUT do return max(0, remaining / FORGE_FADE_OUT)
-	return 1.0
-}
-
-update_forge :: proc(dt: f32) {
-	if !forge_active do return
-	forge_timer += dt
-	if forge_timer >= cfg.forge_duration {
-		forge_active = false
-		return
-	}
-
-	emit_rate := cfg.forge_emit_rate * forge_intensity()
-	expected := emit_rate * dt
-	n := int(expected)
-	if rand.float32() < (expected - f32(n)) do n += 1
-	bottom := f32(window_h) - 2
-	for _ in 0 ..< n {
-		x := rand.float32() * f32(window_w)
-		emit_rising(.EMBER, x, bottom)
-	}
-}
-
-// ---------------------------------------------------------------------------
-// Kill smoke plume (kill / pkill / killall / Ctrl+C)
-// ---------------------------------------------------------------------------
-
-trigger_smoke :: proc() {
-	base_x := f32(cursor_x_g) * f32(cell_w) + f32(PADDING)
-	base_y := f32(cursor_y_g) * f32(cell_h) + f32(PADDING) + f32(cell_h) / 2
-	for _ in 0 ..< cfg.smoke_count {
-		x := base_x + (rand.float32() - 0.5) * f32(cell_w) * cfg.smoke_spread
-		y := base_y + (rand.float32() - 0.5) * f32(cell_h)
-		emit_rising(.SMOKE, x, y)
-	}
-}
-
-// ---------------------------------------------------------------------------
-// Clear whoosh-out — every visible glyph flies radially outward from center
-// ---------------------------------------------------------------------------
-//
-// trigger_whoosh sets a flag; the next draw_frame iteration calls
-// whoosh_emit_cell per cell to snapshot text glyphs into the rising pool.
-// After iteration, whoosh_consume clears the flag.
-
-whoosh_pending: bool
-
-trigger_whoosh :: proc() {
-	whoosh_pending = true
-}
-
-whoosh_emit_cell :: proc(col, row: u16, row_cells_h: gvt.Render_State_Row_Cells) {
-	if !whoosh_pending do return
-	if rising_count >= MAX_RISING do return
-
-	raw: gvt.Cell
-	if gvt.render_state_row_cells_get(row_cells_h, .RAW, &raw) != .SUCCESS do return
-	has: bool
-	if gvt.cell_get(raw, .HAS_TEXT, &has) != .SUCCESS || !has do return
-	cp: u32
-	gvt.cell_get(raw, .CODEPOINT, &cp)
-	if cp < 32 do return
-
-	px := f32(col) * f32(cell_w) + f32(PADDING)
-	py := f32(row) * f32(cell_h) + f32(PADDING)
-
-	cx := f32(window_w) * 0.5
-	cy := f32(window_h) * 0.5
-	dx := px - cx + (rand.float32() - 0.5) * 4.0
-	dy := py - cy + (rand.float32() - 0.5) * 4.0
-	d := math.sqrt(dx * dx + dy * dy)
-	if d < 1 do d = 1
-	speed := cfg.whoosh_speed_min + rand.float32() * (cfg.whoosh_speed_max - cfg.whoosh_speed_min)
-
-	p := &rising[rising_count]
-	rising_count += 1
-	p.kind = .WHOOSH
-	p.pos = {px, py}
-	p.vel = {dx / d * speed, dy / d * speed}
-	p.life = 0.7 + rand.float32() * 0.35
-	p.max_life = p.life
-	p.cp = rune(cp)
-	p.radius_base = 0
-}
-
-whoosh_consume :: proc() {
-	whoosh_pending = false
 }

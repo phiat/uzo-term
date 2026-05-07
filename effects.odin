@@ -4,11 +4,13 @@ import "core:math"
 import "core:math/rand"
 import rl "vendor:raylib"
 
-// Ambient and cell-level effects that are always (or almost-always) running.
-// Command-triggered transients live in effects_command.odin; the shared
-// rising-particle pool lives in effects_particles.odin; scene-wide tints
-// (boot CRT, PWD hue) live in effects_scene.odin; the alt-screen drum lives
-// in effects_drum.odin; the grep laser sweep lives in effects_search.odin.
+// Ambient effects — always-on or near-always-on visuals that aren't tied
+// to a specific command trigger: shake (Enter), cursor afterimage trail,
+// gravity well, typing rhythm warmth, sudo vignette, character glitch, and
+// idle drift. Plus the shared elapsed_g clock that every effect file reads.
+//
+// Per-row state and command-triggered effects live in their own files
+// (effects_row.odin, effects_explosion.odin, effects_cd_fly.odin, …).
 
 // ---------------------------------------------------------------------------
 // Shared time (set once per frame at the top of draw_frame)
@@ -202,55 +204,5 @@ idle_drift_offset :: proc(col, row: u16) -> (dx, dy: f32) {
 	phase := f32(col) * 0.73 + f32(row) * 1.27
 	dx = math.sin(elapsed_g * 0.68 + phase) * cfg.idle_drift_max * idle_strength
 	dy = math.cos(elapsed_g * 0.51 + phase * 0.88) * cfg.idle_drift_max * idle_strength * 0.65
-	return
-}
-
-// ---------------------------------------------------------------------------
-// Line Age Decay
-// ---------------------------------------------------------------------------
-//
-// Each row tracks the last time it was written (marked dirty by the terminal).
-// Rows that haven't changed in a while fade to a dimmer shade.
-
-row_birth:     [TERM_ROWS]f32
-row_ever_born: [TERM_ROWS]bool
-
-mark_row_born :: proc(row: u16) {
-	if row >= TERM_ROWS do return
-	row_birth[row] = elapsed_g
-	row_ever_born[row] = true
-	// Restart emerge animation if the previous one has finished.
-	if row_emerge_until[row] < elapsed_g {
-		row_emerge_until[row] = elapsed_g + cfg.emerge_duration
-	}
-}
-
-// Returns 0..255 brightness multiplier for a row's text.
-row_fade_alpha :: proc(row: u16) -> u8 {
-	if row >= TERM_ROWS || !row_ever_born[row] do return 0xff
-	age := elapsed_g - row_birth[row]
-	if age < 5.0 do return 0xff
-	t := clamp((age - 5.0) / 9.0, 0.0, 1.0)
-	return u8(255.0 * (1.0 - t * 0.58)) // fades to ~42% brightness
-}
-
-// ---------------------------------------------------------------------------
-// Z-emerge — newly-dirty rows tween in from depth (scale + alpha + rise)
-// ---------------------------------------------------------------------------
-
-row_emerge_until: [TERM_ROWS]f32 // animation ends at this elapsed_g
-
-// Returns (dy, scale_mul, alpha_mul) for a row currently emerging.
-emerge_offset :: proc(row: u16) -> (dy: f32, scale: f32, alpha: f32) {
-	if row >= TERM_ROWS do return 0, 1.0, 1.0
-	until := row_emerge_until[row]
-	if until <= 0 || elapsed_g >= until do return 0, 1.0, 1.0
-	t := 1.0 - (until - elapsed_g) / cfg.emerge_duration // 0→1 over the animation
-	if t < 0 do t = 0
-	if t > 1 do t = 1
-	eased := ease_out_cubic(t)
-	dy = (1.0 - eased) * cfg.emerge_rise_px
-	scale = cfg.emerge_scale_min + (1.0 - cfg.emerge_scale_min) * eased
-	alpha = 0.30 + 0.70 * eased
 	return
 }
