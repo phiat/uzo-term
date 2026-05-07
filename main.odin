@@ -497,6 +497,7 @@ draw_pass1b :: proc(elapsed: f32) {
 		)
 	}
 
+	draw_drum_button()
 	draw_sudo_vignette()
 	rl.EndTextureMode()
 }
