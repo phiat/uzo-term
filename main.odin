@@ -298,6 +298,9 @@ handle_input :: proc() {
 		if ctrl {
 			if b, ok := r.ctrl_byte(key); ok {
 				p.write_byte(&pty, b)
+				if key == .C {
+					trigger_smoke()
+				}
 			}
 		}
 	}
@@ -312,6 +315,12 @@ handle_command_line :: proc() {
 		on_sudo_detected()
 	} else if len(line) > 0 {
 		on_sudo_cleared()
+	}
+	if is_build_command(line) {
+		trigger_forge()
+	}
+	if is_kill_command(line) {
+		trigger_smoke()
 	}
 	if len(line) >= 2 && line[:2] == "cd" {
 		dir := "~"
@@ -350,6 +359,7 @@ draw_frame :: proc() {
 	update_idle()
 	update_camera_fly()
 	update_pwd_tint(rl.GetFrameTime())
+	update_forge(rl.GetFrameTime())
 
 	// ── Pass 1: draw everything to render texture ──
 	rl.BeginTextureMode(target)
@@ -432,6 +442,7 @@ draw_frame :: proc() {
 	draw_key_drops()
 	draw_cursor_trail()
 	update_draw_particles()
+	update_draw_rising()
 	draw_sudo_vignette()
 
 	gvt.term_render_clean(&gterm)
@@ -643,6 +654,51 @@ contains :: proc(s, sub: string) -> bool {
 		if s[i:i + len(sub)] == sub do return true
 	}
 	return false
+}
+
+// First whitespace-trimmed word, with any leading path prefix stripped:
+// "/usr/bin/make" → "make", "  cargo build" → "cargo".
+@(private = "file")
+first_command :: proc(line: string) -> string {
+	s := line
+	for len(s) > 0 && s[0] == ' ' do s = s[1:]
+	end := 0
+	for end < len(s) && s[end] != ' ' do end += 1
+	first := s[:end]
+	last_slash := -1
+	for i in 0 ..< len(first) {
+		if first[i] == '/' do last_slash = i
+	}
+	return first[last_slash + 1:]
+}
+
+// True if the input line looks like a build / compile / install command.
+// Covers: make / just / ninja / bazel / cmake / gcc / clang / mvn / gradle /
+// tsc directly; plus anything that takes ` build`, ` install`, or ` compile`
+// as a subcommand (cargo build, go build, npm install, odin build, zig build,
+// dotnet build, swift build, pip install, …).
+is_build_command :: proc(line: string) -> bool {
+	cmd := first_command(line)
+	if cmd == "" do return false
+
+	BUILD_LEADERS :: []string {
+		"make", "just", "ninja", "bazel", "cmake", "ctest",
+		"gcc", "clang", "g++", "cc", "c++",
+		"mvn", "gradle", "tsc", "esbuild", "webpack", "rollup",
+		"ld", "ar", "ranlib",
+	}
+	for leader in BUILD_LEADERS {
+		if cmd == leader do return true
+	}
+
+	// Multi-word: cargo build, go build, npm install, odin build, etc.
+	return contains(line, " build") || contains(line, " install") || contains(line, " compile")
+}
+
+// True for kill / pkill / killall (or any path-prefixed variant).
+is_kill_command :: proc(line: string) -> bool {
+	cmd := first_command(line)
+	return cmd == "kill" || cmd == "pkill" || cmd == "killall"
 }
 
 // Color and UTF-8 helpers now live in `ghosdin:render_rl` (`r.to_rl_color`,

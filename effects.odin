@@ -808,3 +808,137 @@ pwd_tint :: proc(base: rl.Color, strength: f32) -> rl.Color {
 		base.a,
 	}
 }
+
+// ---------------------------------------------------------------------------
+// Rising particles (forge embers + kill smoke share one pool)
+// ---------------------------------------------------------------------------
+
+Rising_Kind :: enum {
+	EMBER, // forge — bright orange spark rising fast
+	SMOKE, // kill — soft grey expanding cloud rising slow
+}
+
+Rising_Particle :: struct {
+	pos, vel:    rl.Vector2,
+	life:        f32,
+	max_life:    f32,
+	kind:        Rising_Kind,
+	radius_base: f32,
+}
+
+MAX_RISING :: 96
+rising:       [MAX_RISING]Rising_Particle
+rising_count: int
+
+emit_rising :: proc(kind: Rising_Kind, x, y: f32) {
+	if rising_count >= MAX_RISING do return
+	p := &rising[rising_count]
+	rising_count += 1
+
+	p.kind = kind
+	p.pos = {x, y}
+	switch kind {
+	case .EMBER:
+		p.vel = {(rand.float32() - 0.5) * 30, -45 - rand.float32() * 70}
+		p.life = 1.4 + rand.float32() * 1.2
+		p.radius_base = 1.2 + rand.float32() * 1.6
+	case .SMOKE:
+		p.vel = {(rand.float32() - 0.5) * 14, -22 - rand.float32() * 30}
+		p.life = 1.6 + rand.float32() * 1.2
+		p.radius_base = 4.0 + rand.float32() * 5.0
+	}
+	p.max_life = p.life
+}
+
+update_draw_rising :: proc() {
+	dt := rl.GetFrameTime()
+	new_count := 0
+	for i in 0 ..< rising_count {
+		p := &rising[i]
+		p.life -= dt
+		if p.life <= 0 do continue
+
+		// Slight horizontal drag, no gravity (these rise).
+		p.vel.x *= 1.0 - 3.0 * dt
+		p.pos.x += p.vel.x * dt
+		p.pos.y += p.vel.y * dt
+
+		t := p.life / p.max_life
+		switch p.kind {
+		case .EMBER:
+			r: u8 = 255
+			g := u8(60 + 195.0 * t * t)
+			b := u8(40.0 * t)
+			a := u8(220.0 * t)
+			radius := p.radius_base * (0.55 + 0.45 * t)
+			rl.DrawCircleV(p.pos, radius, {r, g, b, a})
+		case .SMOKE:
+			grey := u8(55 + 35.0 * t)
+			a := u8(150.0 * t * t)
+			radius := p.radius_base * (1.0 + 1.4 * (1.0 - t))
+			rl.DrawCircleV(p.pos, radius, {grey, grey, grey, a})
+		}
+
+		rising[new_count] = rising[i]
+		new_count += 1
+	}
+	rising_count = new_count
+}
+
+// ---------------------------------------------------------------------------
+// Forge sparks (build commands)
+// ---------------------------------------------------------------------------
+
+FORGE_DURATION :: f32(7.0)
+FORGE_FADE_IN  :: f32(0.5)
+FORGE_FADE_OUT :: f32(2.0)
+
+forge_timer:  f32 = 0
+forge_active: bool
+
+trigger_forge :: proc() {
+	forge_active = true
+	forge_timer = 0
+}
+
+forge_intensity :: proc() -> f32 {
+	if !forge_active do return 0
+	if forge_timer < FORGE_FADE_IN do return forge_timer / FORGE_FADE_IN
+	remaining := FORGE_DURATION - forge_timer
+	if remaining < FORGE_FADE_OUT do return max(0, remaining / FORGE_FADE_OUT)
+	return 1.0
+}
+
+update_forge :: proc(dt: f32) {
+	if !forge_active do return
+	forge_timer += dt
+	if forge_timer >= FORGE_DURATION {
+		forge_active = false
+		return
+	}
+
+	// Emit embers from random x positions along the bottom edge.
+	emit_rate := 28.0 * forge_intensity()
+	expected := emit_rate * dt
+	n := int(expected)
+	if rand.float32() < (expected - f32(n)) do n += 1
+	bottom := f32(window_h) - 2
+	for _ in 0 ..< n {
+		x := rand.float32() * f32(window_w)
+		emit_rising(.EMBER, x, bottom)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Kill smoke plume (kill / pkill / killall / Ctrl+C)
+// ---------------------------------------------------------------------------
+
+trigger_smoke :: proc() {
+	base_x := f32(cursor_x_g) * f32(cell_w) + f32(PADDING)
+	base_y := f32(cursor_y_g) * f32(cell_h) + f32(PADDING) + f32(cell_h) / 2
+	for _ in 0 ..< 24 {
+		x := base_x + (rand.float32() - 0.5) * f32(cell_w) * 4.0
+		y := base_y + (rand.float32() - 0.5) * f32(cell_h)
+		emit_rising(.SMOKE, x, y)
+	}
+}
