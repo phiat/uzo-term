@@ -50,6 +50,14 @@ Effect_Config :: struct {
 	// Clear whoosh-out
 	whoosh_speed_min: f32,
 	whoosh_speed_max: f32,
+	// Z-emerge — newly-dirty rows tween in from depth
+	emerge_duration: f32,
+	emerge_rise_px:  f32,
+	emerge_scale_min: f32,
+	// Grep laser sweep
+	laser_duration: f32,
+	laser_speed:    f32, // pixels per second
+	laser_lock_hold: f32,
 	// Palette
 	term_bg: rl.Color,
 	fg_color: rl.Color,
@@ -96,6 +104,12 @@ init_config :: proc() {
 		drum_drag_sensitivity = 0.012,
 		whoosh_speed_min     = 220.0,
 		whoosh_speed_max     = 500.0,
+		emerge_duration      = 0.32,
+		emerge_rise_px       = 14.0,
+		emerge_scale_min     = 0.55,
+		laser_duration       = 5.0,
+		laser_speed          = 450.0,
+		laser_lock_hold      = 0.35,
 		term_bg              = {0x1d, 0x1f, 0x21, 0xe0},
 		fg_color             = {0xc5, 0xc8, 0xc6, 0xff},
 		cursor_color         = {0xc5, 0xc8, 0xc6, 0xcc},
@@ -158,6 +172,12 @@ randomize_config :: proc() {
 	// drum_drag_sensitivity stays at default — randomization unhelpful here
 	cfg.whoosh_speed_min     = rf(120.0, 280.0)
 	cfg.whoosh_speed_max     = cfg.whoosh_speed_min + rf(80.0, 360.0)
+	cfg.emerge_duration      = rf(0.18, 0.65)
+	cfg.emerge_rise_px       = rf(4.0, 30.0)
+	cfg.emerge_scale_min     = rf(0.30, 0.85)
+	cfg.laser_duration       = rf(3.0, 9.0)
+	cfg.laser_speed          = rf(180.0, 900.0)
+	cfg.laser_lock_hold      = rf(0.20, 0.70)
 
 	// Random palette — pick a base hue and derive everything from it
 	hue := rand.float32() * 360.0
@@ -196,6 +216,10 @@ print_config :: proc() {
 		cfg.drum_tumble_duration, cfg.drum_base_spin, cfg.drum_density_gain,
 		cfg.drum_radius, cfg.drum_length)
 	fmt.eprintf("  whoosh:    speed=%.0f..%.0f\n", cfg.whoosh_speed_min, cfg.whoosh_speed_max)
+	fmt.eprintf("  emerge:    dur=%.2f  rise=%.1f  scale_min=%.2f\n",
+		cfg.emerge_duration, cfg.emerge_rise_px, cfg.emerge_scale_min)
+	fmt.eprintf("  laser:     dur=%.2f  speed=%.0f  lock_hold=%.2f\n",
+		cfg.laser_duration, cfg.laser_speed, cfg.laser_lock_hold)
 	pc :: proc(name: string, c: rl.Color) {
 		fmt.eprintf("  %s: #%02x%02x%02x (a=%02x)\n", name, c.r, c.g, c.b, c.a)
 	}
@@ -231,6 +255,8 @@ print_help :: proc() {
 	fmt.eprintln("  shockwave-duration, shockwave-amp, shockwave-sigma, shockwave-wavelength")
 	fmt.eprintln("  drum-tumble, drum-spin, drum-density-gain, drum-radius, drum-length, drum-drag")
 	fmt.eprintln("  whoosh-speed-min, whoosh-speed-max")
+	fmt.eprintln("  emerge-duration, emerge-rise, emerge-scale-min")
+	fmt.eprintln("  laser-duration, laser-speed, laser-lock-hold")
 	fmt.eprintln()
 	fmt.eprintln("Examples:")
 	fmt.eprintln("  uzo-term --rand")
@@ -301,6 +327,12 @@ parse_config_args :: proc() {
 		case "drum-drag":            if f_ok do cfg.drum_drag_sensitivity = f32(fval)
 		case "whoosh-speed-min":     if f_ok do cfg.whoosh_speed_min     = f32(fval)
 		case "whoosh-speed-max":     if f_ok do cfg.whoosh_speed_max     = f32(fval)
+		case "emerge-duration":      if f_ok do cfg.emerge_duration      = f32(fval)
+		case "emerge-rise":          if f_ok do cfg.emerge_rise_px       = f32(fval)
+		case "emerge-scale-min":     if f_ok do cfg.emerge_scale_min     = f32(fval)
+		case "laser-duration":       if f_ok do cfg.laser_duration       = f32(fval)
+		case "laser-speed":          if f_ok do cfg.laser_speed          = f32(fval)
+		case "laser-lock-hold":      if f_ok do cfg.laser_lock_hold      = f32(fval)
 		case:
 			fmt.eprintf("unknown effect param: --%s (try --help)\n", name)
 		}

@@ -348,6 +348,12 @@ handle_command_line :: proc() {
 	if line == "clear" || line == "reset" {
 		trigger_whoosh()
 	}
+	if is_search_command(line) {
+		needle, ok := extract_search_needle(line)
+		if ok && len(needle) > 0 {
+			trigger_search(needle)
+		}
+	}
 	if len(line) >= 2 && line[:2] == "cd" {
 		dir := "~"
 		row_text := string(cursor_row_buf[:cursor_row_len])
@@ -449,6 +455,8 @@ draw_frame :: proc() {
 		}
 	}
 	whoosh_consume()
+	search_scan_rows()
+	update_search(dt)
 
 	if cursor_visible_g {
 		cx := f32(cursor.x) * f32(cell_w) + PADDING
@@ -497,6 +505,7 @@ draw_pass1b :: proc(elapsed: f32) {
 		)
 	}
 
+	draw_search_overlay()
 	draw_drum_button()
 	draw_sudo_vignette()
 	rl.EndTextureMode()
@@ -568,8 +577,9 @@ draw_cell :: proc(col: u16, row: u16, row_cells_h: gvt.Render_State_Row_Cells, c
 	ix, iy := idle_drift_offset(col, row)
 	ls_dx, ls_scale := ls_cell_offset(col, row)
 	sw_dx := shockwave_offset(row)
+	em_dy, em_scale, em_alpha := emerge_offset(row)
 	px := base_x + gx + ix + ls_dx + sw_dx
-	py := base_y + gy + iy
+	py := base_y + gy + iy + em_dy
 
 	bg_rgb: gvt.Color_Rgb
 	if gvt.render_state_row_cells_get(row_cells_h, .BG_COLOR, &bg_rgb) == .SUCCESS {
@@ -585,6 +595,7 @@ draw_cell :: proc(col: u16, row: u16, row_cells_h: gvt.Render_State_Row_Cells, c
 
 	cp: u32
 	gvt.cell_get(raw_cell, .CODEPOINT, &cp)
+	search_capture_cell(col, row, cp)
 	if cp == 0 || cp < 32 do return
 
 	fg_rgb: gvt.Color_Rgb
@@ -635,7 +646,10 @@ draw_cell :: proc(col: u16, row: u16, row_cells_h: gvt.Render_State_Row_Cells, c
 	if gc, ok := glitch_codepoint(col, row); ok {
 		draw_cp = gc
 	}
-	draw_sz := f32(font_size) * ls_scale
+	draw_sz := f32(font_size) * ls_scale * em_scale
+	if em_alpha < 1.0 {
+		fg_color.a = u8(f32(fg_color.a) * em_alpha)
+	}
 	rl.DrawTextCodepoint(font, draw_cp, {px, py}, draw_sz, fg_color)
 }
 
@@ -837,6 +851,46 @@ is_build_command :: proc(line: string) -> bool {
 is_kill_command :: proc(line: string) -> bool {
 	cmd := first_command(line)
 	return cmd == "kill" || cmd == "pkill" || cmd == "killall"
+}
+
+// True for grep / rg / ag / find / ack (or any path-prefixed variant).
+is_search_command :: proc(line: string) -> bool {
+	cmd := first_command(line)
+	return cmd == "grep" || cmd == "rg" || cmd == "ag" || cmd == "find" ||
+	       cmd == "ack" || cmd == "fgrep" || cmd == "egrep"
+}
+
+// Pull a literal search needle out of a search command line: skip the
+// command word and any flag tokens (-X / --foo), then take the next word
+// (stripping surrounding quotes). Returns ("", false) if no needle found.
+extract_search_needle :: proc(line: string) -> (string, bool) {
+	s := line
+	for len(s) > 0 && s[0] == ' ' do s = s[1:]
+	// skip command word
+	end := 0
+	for end < len(s) && s[end] != ' ' do end += 1
+	s = s[end:]
+	for len(s) > 0 {
+		for len(s) > 0 && s[0] == ' ' do s = s[1:]
+		if len(s) == 0 do break
+		if s[0] == '-' {
+			end = 0
+			for end < len(s) && s[end] != ' ' do end += 1
+			s = s[end:]
+			continue
+		}
+		if s[0] == '"' || s[0] == '\'' {
+			quote := s[0]
+			s = s[1:]
+			end = 0
+			for end < len(s) && s[end] != quote do end += 1
+			return s[:end], end > 0
+		}
+		end = 0
+		for end < len(s) && s[end] != ' ' do end += 1
+		return s[:end], end > 0
+	}
+	return "", false
 }
 
 // Color and UTF-8 helpers now live in `ghosdin:render_rl` (`r.to_rl_color`,
