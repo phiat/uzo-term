@@ -552,7 +552,12 @@ draw_pass2 :: proc(elapsed_in: f32) {
 // ---------------------------------------------------------------------------
 
 draw_3d_scene :: proc(t: f32) {
-	// Slow-spinning grid of dim cubes — visible through the translucent terminal bg
+	if shardwall_active {
+		draw_shardwall(t)
+		return
+	}
+
+	// Fallback: slow-spinning grid of dim wireframe cubes (legacy look).
 	fly := cam_fly_intensity()
 	for ix in -3 ..= 3 {
 		for iz in -3 ..= 3 {
@@ -561,11 +566,10 @@ draw_3d_scene :: proc(t: f32) {
 			y := math.sin(t * 0.6 + f32(ix + iz) * 0.8) * 0.4
 
 			base_bright := f32(25 + int(15 * math.sin(t * 0.4 + f32(ix * iz) * 0.3)))
-			// During cd fly, cubes glow much brighter
 			bright := u8(base_bright + fly * (180.0 - base_bright))
 			color := pwd_tint(rl.Color{bright, bright, bright + 10, 0xff}, cfg.pwd_tint_cube)
 
-			sz := 0.6 + fly * 0.3 // slightly larger during fly
+			sz := 0.6 + fly * 0.3
 			rl.DrawCubeWires({x, y, z}, sz, sz, sz, color)
 		}
 	}
