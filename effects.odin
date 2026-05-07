@@ -814,8 +814,9 @@ pwd_tint :: proc(base: rl.Color, strength: f32) -> rl.Color {
 // ---------------------------------------------------------------------------
 
 Rising_Kind :: enum {
-	EMBER, // forge — bright orange spark rising fast
-	SMOKE, // kill — soft grey expanding cloud rising slow
+	EMBER,  // forge — bright orange spark rising fast
+	SMOKE,  // kill — soft grey expanding cloud rising slow
+	WHOOSH, // clear — glyph flung radially outward from screen center
 }
 
 Rising_Particle :: struct {
@@ -824,9 +825,10 @@ Rising_Particle :: struct {
 	max_life:    f32,
 	kind:        Rising_Kind,
 	radius_base: f32,
+	cp:          rune, // WHOOSH only — codepoint to draw
 }
 
-MAX_RISING :: 96
+MAX_RISING :: 1024
 rising:       [MAX_RISING]Rising_Particle
 rising_count: int
 
@@ -837,7 +839,7 @@ emit_rising :: proc(kind: Rising_Kind, x, y: f32) {
 
 	p.kind = kind
 	p.pos = {x, y}
-	switch kind {
+	#partial switch kind {
 	case .EMBER:
 		p.vel = {(rand.float32() - 0.5) * 30, -45 - rand.float32() * 70}
 		p.life = 1.4 + rand.float32() * 1.2
@@ -858,8 +860,16 @@ update_draw_rising :: proc() {
 		p.life -= dt
 		if p.life <= 0 do continue
 
-		// Slight horizontal drag, no gravity (these rise).
-		p.vel.x *= 1.0 - 3.0 * dt
+		switch p.kind {
+		case .EMBER, .SMOKE:
+			// Slight horizontal drag, no gravity (these rise).
+			p.vel.x *= 1.0 - 3.0 * dt
+		case .WHOOSH:
+			// Both-axis drag, no gravity — radial fling decays smoothly.
+			drag := 1.0 - 2.5 * dt
+			p.vel.x *= drag
+			p.vel.y *= drag
+		}
 		p.pos.x += p.vel.x * dt
 		p.pos.y += p.vel.y * dt
 
@@ -880,6 +890,10 @@ update_draw_rising :: proc() {
 			a := u8(252.0 * t)
 			radius := p.radius_base * (1.0 + 1.4 * (1.0 - t))
 			rl.DrawCircleV(p.pos, radius, {r, g, b, a})
+		case .WHOOSH:
+			a := u8(255.0 * t)
+			rl.DrawTextCodepoint(font, p.cp, p.pos, f32(font_size),
+				{cfg.fg_color.r, cfg.fg_color.g, cfg.fg_color.b, a})
 		}
 
 		rising[new_count] = rising[i]
@@ -944,4 +958,90 @@ trigger_smoke :: proc() {
 		y := base_y + (rand.float32() - 0.5) * f32(cell_h)
 		emit_rising(.SMOKE, x, y)
 	}
+}
+
+// ---------------------------------------------------------------------------
+// Enter shockwave (horizontal ripple sweeping downward from cursor row)
+// ---------------------------------------------------------------------------
+
+SHOCKWAVE_DURATION        :: f32(0.45)
+SHOCKWAVE_AMP_PX          :: f32(8.0)
+SHOCKWAVE_SIGMA_ROWS      :: f32(2.5)
+SHOCKWAVE_WAVELENGTH_ROWS :: f32(3.0)
+
+shockwave_t:         f32 = 1.0
+shockwave_start_row: i32 = 0
+
+trigger_shockwave :: proc() {
+	shockwave_t = 0
+	shockwave_start_row = i32(cursor_y_g)
+}
+
+update_shockwave :: proc(dt: f32) {
+	if shockwave_t >= 1.0 do return
+	shockwave_t = min(1.0, shockwave_t + dt / SHOCKWAVE_DURATION)
+}
+
+// Returns horizontal pixel offset for `row` as the shock wave passes.
+shockwave_offset :: proc(row: u16) -> f32 {
+	if shockwave_t >= 1.0 do return 0
+	eased := ease_out_cubic(shockwave_t)
+	front := f32(shockwave_start_row) + eased * f32(TERM_ROWS)
+	d := f32(row) - front
+	sigma := SHOCKWAVE_SIGMA_ROWS
+	envelope := math.exp(-(d * d) / (2 * sigma * sigma))
+	amp := SHOCKWAVE_AMP_PX * (1.0 - shockwave_t) * envelope
+	return amp * math.sin(d / SHOCKWAVE_WAVELENGTH_ROWS * 2 * math.PI)
+}
+
+// ---------------------------------------------------------------------------
+// Clear whoosh-out — every visible glyph flies radially outward from center
+// ---------------------------------------------------------------------------
+//
+// trigger_whoosh sets a flag; the next draw_frame iteration calls
+// whoosh_emit_cell per cell to snapshot text glyphs into the rising pool.
+// After iteration, whoosh_consume clears the flag.
+
+whoosh_pending: bool
+
+trigger_whoosh :: proc() {
+	whoosh_pending = true
+}
+
+whoosh_emit_cell :: proc(col, row: u16, row_cells_h: gvt.Render_State_Row_Cells) {
+	if !whoosh_pending do return
+	if rising_count >= MAX_RISING do return
+
+	raw: gvt.Cell
+	if gvt.render_state_row_cells_get(row_cells_h, .RAW, &raw) != .SUCCESS do return
+	has: bool
+	if gvt.cell_get(raw, .HAS_TEXT, &has) != .SUCCESS || !has do return
+	cp: u32
+	gvt.cell_get(raw, .CODEPOINT, &cp)
+	if cp < 32 do return
+
+	px := f32(col) * f32(cell_w) + f32(PADDING)
+	py := f32(row) * f32(cell_h) + f32(PADDING)
+
+	cx := f32(window_w) * 0.5
+	cy := f32(window_h) * 0.5
+	dx := px - cx + (rand.float32() - 0.5) * 4.0
+	dy := py - cy + (rand.float32() - 0.5) * 4.0
+	d := math.sqrt(dx * dx + dy * dy)
+	if d < 1 do d = 1
+	speed := 220.0 + rand.float32() * 280.0
+
+	p := &rising[rising_count]
+	rising_count += 1
+	p.kind = .WHOOSH
+	p.pos = {px, py}
+	p.vel = {dx / d * speed, dy / d * speed}
+	p.life = 0.7 + rand.float32() * 0.35
+	p.max_life = p.life
+	p.cp = rune(cp)
+	p.radius_base = 0
+}
+
+whoosh_consume :: proc() {
+	whoosh_pending = false
 }

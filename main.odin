@@ -279,6 +279,7 @@ handle_input :: proc() {
 		if key == .ENTER {
 			trigger_shake()
 			trigger_explosion()
+			trigger_shockwave()
 			reset_idle()
 			handle_command_line()
 			input_line_len = 0
@@ -300,6 +301,8 @@ handle_input :: proc() {
 				p.write_byte(&pty, b)
 				if key == .C {
 					trigger_smoke()
+				} else if key == .L {
+					trigger_whoosh()
 				}
 			}
 		}
@@ -321,6 +324,9 @@ handle_command_line :: proc() {
 	}
 	if is_kill_command(line) {
 		trigger_smoke()
+	}
+	if line == "clear" || line == "reset" {
+		trigger_whoosh()
 	}
 	if len(line) >= 2 && line[:2] == "cd" {
 		dir := "~"
@@ -360,6 +366,7 @@ draw_frame :: proc() {
 	update_camera_fly()
 	update_pwd_tint(rl.GetFrameTime())
 	update_forge(rl.GetFrameTime())
+	update_shockwave(rl.GetFrameTime())
 
 	// ── Pass 1: draw everything to render texture ──
 	rl.BeginTextureMode(target)
@@ -424,10 +431,12 @@ draw_frame :: proc() {
 					}
 				}
 			}
+			whoosh_emit_cell(col_idx, row, row_cells_h)
 			draw_cell(col_idx, row, row_cells_h, &colors)
 			col_idx += 1
 		}
 	}
+	whoosh_consume()
 
 	// Cursor
 	if cursor_visible_g {
@@ -517,7 +526,8 @@ draw_cell :: proc(col: u16, row: u16, row_cells_h: gvt.Render_State_Row_Cells, c
 	gx, gy := gravity_offset(col, row)
 	ix, iy := idle_drift_offset(col, row)
 	ls_dx, ls_scale := ls_cell_offset(col, row)
-	px := base_x + gx + ix + ls_dx
+	sw_dx := shockwave_offset(row)
+	px := base_x + gx + ix + ls_dx + sw_dx
 	py := base_y + gy + iy
 
 	bg_rgb: gvt.Color_Rgb
