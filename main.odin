@@ -349,6 +349,7 @@ draw_frame :: proc() {
 
 	update_idle()
 	update_camera_fly()
+	update_pwd_tint(rl.GetFrameTime())
 
 	// ── Pass 1: draw everything to render texture ──
 	rl.BeginTextureMode(target)
@@ -365,7 +366,8 @@ draw_frame :: proc() {
 	// 2D terminal overlay — fades out during cd fly so the 3D scene punches through
 	fly := cam_fly_intensity()
 	term_bg_alpha := u8(f32(cfg.term_bg.a) * (1.0 - fly * 0.92))
-	rl.DrawRectangle(0, 0, window_w, window_h, {cfg.term_bg.r, cfg.term_bg.g, cfg.term_bg.b, term_bg_alpha})
+	bg_tinted := pwd_tint(cfg.term_bg, PWD_TINT_BG)
+	rl.DrawRectangle(0, 0, window_w, window_h, {bg_tinted.r, bg_tinted.g, bg_tinted.b, term_bg_alpha})
 
 	// Update render state — bail to just the background if it fails
 	if gvt.term_render_update(&gterm) != .None {
@@ -446,6 +448,7 @@ draw_pass2 :: proc(elapsed_in: f32) {
 	shake_offset := update_shake(elapsed)
 
 	update_rhythm()
+	update_boot(rl.GetFrameTime())
 
 	rl.BeginDrawing()
 	rl.ClearBackground({0, 0, 0, 0xff})
@@ -463,6 +466,8 @@ draw_pass2 :: proc(elapsed_in: f32) {
 	if tint.a > 0 {
 		rl.DrawRectangle(0, 0, window_w, window_h, tint)
 	}
+	// Boot-up CRT flash on top of everything (no-op after first ~650 ms)
+	draw_boot_overlay()
 	rl.EndDrawing()
 }
 
@@ -482,7 +487,7 @@ draw_3d_scene :: proc(t: f32) {
 			base_bright := f32(25 + int(15 * math.sin(t * 0.4 + f32(ix * iz) * 0.3)))
 			// During cd fly, cubes glow much brighter
 			bright := u8(base_bright + fly * (180.0 - base_bright))
-			color := rl.Color{bright, bright, bright + 10, 0xff}
+			color := pwd_tint(rl.Color{bright, bright, bright + 10, 0xff}, PWD_TINT_CUBE)
 
 			sz := 0.6 + fly * 0.3 // slightly larger during fly
 			rl.DrawCubeWires({x, y, z}, sz, sz, sz, color)
