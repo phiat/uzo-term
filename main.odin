@@ -217,6 +217,7 @@ main :: proc() {
 			pump_pty()
 			handle_input()
 			handle_hyperlink_click()
+			handle_drum_drag()
 			draw_frame()
 		}
 	}

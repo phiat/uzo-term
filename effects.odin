@@ -1057,24 +1057,36 @@ drum_active:   bool
 
 drum_dirty_rows: int // counter accumulated by main during cell iteration
 
+drum_dragging:    bool
+drum_drag_last_y: f32
+
 init_drum :: proc() {
 	drum_mesh = rl.GenMeshCylinder(cfg.drum_radius, cfg.drum_length, DRUM_SLICES)
 
-	// Vertical cylinder (axis along +Y by default). Two UV flips:
-	//   - V flip: raylib RenderTextures are vertically inverted when sampled,
-	//     so without this the TUI appears upside-down (top at bottom).
-	//   - U flip: GenMeshCylinder parametrizes U around the circumference CCW
-	//     starting at +X. That puts U=0 on the cylinder's right-hand edge
-	//     (from the camera's view) — which would map TUI col 0 to the right
-	//     and the text would read mirror-image on the visible front face.
-	//     Flipping U puts col 0 on the cylinder's left edge.
-	if drum_mesh.texcoords != nil {
-		n := int(drum_mesh.vertexCount)
-		for i in 0 ..< n {
-			drum_mesh.texcoords[i * 2 + 0] = 1.0 - drum_mesh.texcoords[i * 2 + 0]
-			drum_mesh.texcoords[i * 2 + 1] = 1.0 - drum_mesh.texcoords[i * 2 + 1]
+	// Lay the cylinder on its side: rotate -90° around Z (axis +Y → +X),
+	// translate so it's centered on the world origin.
+	// UVs are left at GenMeshCylinder defaults — on the laid-on-side cylinder
+	// the default mapping rotates the TUI 90° CW relative to "cols along
+	// length", which is the orientation we want.
+	n := int(drum_mesh.vertexCount)
+	half := cfg.drum_length * 0.5
+	for i in 0 ..< n {
+		px := drum_mesh.vertices[i * 3 + 0]
+		py := drum_mesh.vertices[i * 3 + 1]
+		// (x, y) → (y, -x), then -half along X to center
+		drum_mesh.vertices[i * 3 + 0] = py - half
+		drum_mesh.vertices[i * 3 + 1] = -px
+
+		if drum_mesh.normals != nil {
+			nx := drum_mesh.normals[i * 3 + 0]
+			ny := drum_mesh.normals[i * 3 + 1]
+			drum_mesh.normals[i * 3 + 0] = ny
+			drum_mesh.normals[i * 3 + 1] = -nx
 		}
-		rl.UpdateMeshBuffer(drum_mesh, 1, drum_mesh.texcoords, i32(n) * 2 * size_of(f32), 0)
+	}
+	rl.UpdateMeshBuffer(drum_mesh, 0, drum_mesh.vertices, i32(n) * 3 * size_of(f32), 0)
+	if drum_mesh.normals != nil {
+		rl.UpdateMeshBuffer(drum_mesh, 2, drum_mesh.normals, i32(n) * 3 * size_of(f32), 0)
 	}
 
 	drum_model = rl.LoadModelFromMesh(drum_mesh)
@@ -1105,9 +1117,44 @@ update_drum :: proc(dt: f32) {
 	drum_density += (target_density - drum_density) * min(dt * 3.5, 1.0)
 	drum_dirty_rows = 0
 
-	if drum_target_t > 0 {
+	// Skip auto-spin while the user is dragging — they are in control.
+	if drum_target_t > 0 && !drum_dragging {
 		spin_rate := cfg.drum_base_spin + drum_density * cfg.drum_density_gain
 		drum_angle += spin_rate * dt
+	}
+}
+
+// Mouse-grab rotation. Plain left-button drag while the drum is active
+// rotates it around its X axis: drag down → drum rolls forward (visible
+// front comes toward camera and down). Ctrl+Click is reserved for OSC 8
+// hyperlinks, so we ignore drags that start with Ctrl held.
+handle_drum_drag :: proc() {
+	if !drum_active {
+		drum_dragging = false
+		return
+	}
+
+	mouse_y := rl.GetMousePosition().y
+
+	if rl.IsMouseButtonPressed(.LEFT) {
+		ctrl := rl.IsKeyDown(.LEFT_CONTROL) || rl.IsKeyDown(.RIGHT_CONTROL)
+		if !ctrl {
+			drum_dragging = true
+			drum_drag_last_y = mouse_y
+		}
+	}
+
+	if rl.IsMouseButtonReleased(.LEFT) {
+		drum_dragging = false
+	}
+
+	if drum_dragging && rl.IsMouseButtonDown(.LEFT) {
+		dy := mouse_y - drum_drag_last_y
+		drum_drag_last_y = mouse_y
+		// Spin axis is {-1, 0, 0} so positive drum_angle rolls the front
+		// upward. To make "drag down" feel like grabbing the front and
+		// pulling it down, decrement the angle when the mouse moves down.
+		drum_angle -= dy * cfg.drum_drag_sensitivity
 	}
 }
 
@@ -1127,7 +1174,7 @@ draw_drum_3d :: proc(term_tex: rl.Texture2D) {
 
 	a := u8(255.0 * drum_visible_alpha())
 	angle_deg := drum_angle * 180.0 / math.PI
-	// GenMeshCylinder runs from y=0 to y=length; offset to center on origin.
-	pos := rl.Vector3{0, -cfg.drum_length * 0.5, 0}
-	rl.DrawModelEx(drum_model, pos, {0, 1, 0}, angle_deg, {1, 1, 1}, {255, 255, 255, a})
+	// Mesh is centered at origin. Spin around -X so the visible front face
+	// rolls upward (content scrolls up like a teleprompter).
+	rl.DrawModelEx(drum_model, {0, 0, 0}, {-1, 0, 0}, angle_deg, {1, 1, 1}, {255, 255, 255, a})
 }
