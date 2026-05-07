@@ -11,6 +11,8 @@ import "base:runtime"
 import "core:c"
 import "core:fmt"
 import "core:math"
+import "core:strings"
+import "core:sys/posix"
 import p "ghosdin:pty"
 import r "ghosdin:render_rl"
 import gvt "ghosdin:vendor/ghostty_vt"
@@ -214,6 +216,7 @@ main :: proc() {
 		} else {
 			pump_pty()
 			handle_input()
+			handle_hyperlink_click()
 			draw_frame()
 		}
 	}
@@ -279,6 +282,15 @@ handle_input :: proc() {
 				apply_font_size()
 				continue
 			}
+		}
+
+		shift := rl.IsKeyDown(.LEFT_SHIFT) || rl.IsKeyDown(.RIGHT_SHIFT)
+
+		// Ctrl+Shift+V: paste from system clipboard via libghostty-vt's encoder
+		// (handles bracketed-paste wrapping + unsafe byte stripping).
+		if ctrl && shift && key == .V {
+			paste_clipboard()
+			continue
 		}
 
 		// Enter has uzo-term-specific side effects (effects + command detection)
@@ -681,6 +693,91 @@ apply_font_size :: proc() {
 update_resolution :: proc() {
 	res := [2]f32{f32(window_w), f32(window_h)}
 	rl.SetShaderValue(shader, resolution_loc, &res, .VEC2)
+}
+
+// ---------------------------------------------------------------------------
+// Paste (Ctrl+Shift+V)
+// ---------------------------------------------------------------------------
+
+paste_clipboard :: proc() {
+	cstr := rl.GetClipboardText()
+	if cstr == nil do return
+	src := string(cstr)
+	if len(src) == 0 do return
+
+	// paste_encode mutates the data buffer in place; copy first.
+	data_buf := make([]u8, len(src))
+	defer delete(data_buf)
+	copy(data_buf, transmute([]u8)src)
+
+	bracketed := gvt.term_mode_get(&gterm, gvt.MODE_BRACKETED_PASTE)
+
+	// Output adds at most 12 bytes of bracketed-paste wrap; +32 is plenty.
+	out_buf := make([]u8, len(src) + 32)
+	defer delete(out_buf)
+
+	written: c.size_t
+	res := gvt.paste_encode(
+		raw_data(data_buf), c.size_t(len(data_buf)),
+		bracketed,
+		raw_data(out_buf), c.size_t(len(out_buf)),
+		&written,
+	)
+	if res != .SUCCESS || written == 0 do return
+	p.write_bytes(&pty, out_buf[:written])
+}
+
+// ---------------------------------------------------------------------------
+// Hyperlink click-through (OSC 8) — Ctrl+Click
+// ---------------------------------------------------------------------------
+
+// Translate a mouse position to active-screen cell coordinates. Returns false
+// if the position falls outside the terminal grid.
+mouse_to_cell :: proc(mp: rl.Vector2) -> (col: u16, row: u16, ok: bool) {
+	col_f := (mp.x - PADDING) / f32(cell_w)
+	row_f := (mp.y - PADDING) / f32(cell_h)
+	if col_f < 0 || row_f < 0 do return 0, 0, false
+	if col_f >= TERM_COLS || row_f >= TERM_ROWS do return 0, 0, false
+	return u16(col_f), u16(row_f), true
+}
+
+// If the cell under (col, row) carries an OSC 8 hyperlink, return its URI
+// in `buf` and the byte length. Returns ok=false otherwise.
+hyperlink_at :: proc(col, row: u16, buf: []u8) -> (uri: string, ok: bool) {
+	pt := gvt.Point{tag = .ACTIVE, value = {coordinate = {x = col, y = u32(row)}}}
+	ref := gvt.Grid_Ref{size = size_of(gvt.Grid_Ref)}
+	if gvt.terminal_grid_ref(gterm.handle, pt, &ref) != .SUCCESS do return "", false
+
+	out_len: c.size_t
+	res := gvt.grid_ref_hyperlink_uri(&ref, raw_data(buf), c.size_t(len(buf)), &out_len)
+	if res != .SUCCESS || out_len == 0 do return "", false
+	return string(buf[:out_len]), true
+}
+
+handle_hyperlink_click :: proc() {
+	if !rl.IsMouseButtonPressed(.LEFT) do return
+	ctrl := rl.IsKeyDown(.LEFT_CONTROL) || rl.IsKeyDown(.RIGHT_CONTROL)
+	if !ctrl do return
+
+	col, row, ok := mouse_to_cell(rl.GetMousePosition())
+	if !ok do return
+
+	buf: [4096]u8
+	uri, has := hyperlink_at(col, row, buf[:])
+	if !has do return
+	open_url(uri)
+}
+
+// Spawn `xdg-open <url>` without going through a shell. posix_spawnp returns
+// immediately; we don't wait for the child (xdg-open backgrounds itself).
+open_url :: proc(url: string) {
+	url_c, err := strings.clone_to_cstring(url)
+	if err != nil do return
+	defer delete(url_c)
+
+	argv := [3]cstring{"xdg-open", url_c, nil}
+	pid: posix.pid_t
+	posix.posix_spawnp(&pid, "xdg-open", nil, nil, raw_data(&argv), nil)
 }
 
 // ---------------------------------------------------------------------------
