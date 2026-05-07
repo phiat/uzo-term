@@ -44,6 +44,8 @@ Effect_Config :: struct {
 	drum_tumble_duration: f32,
 	drum_base_spin: f32,
 	drum_density_gain: f32,
+	drum_radius: f32,
+	drum_length: f32,
 	// Clear whoosh-out
 	whoosh_speed_min: f32,
 	whoosh_speed_max: f32,
@@ -88,6 +90,8 @@ init_config :: proc() {
 		drum_tumble_duration = 0.45,
 		drum_base_spin       = 0.18,
 		drum_density_gain    = 0.045,
+		drum_radius          = 3.6,
+		drum_length          = 8.1,
 		whoosh_speed_min     = 220.0,
 		whoosh_speed_max     = 500.0,
 		term_bg              = {0x1d, 0x1f, 0x21, 0xe0},
@@ -147,6 +151,8 @@ randomize_config :: proc() {
 	cfg.drum_tumble_duration = rf(0.20, 1.10)
 	cfg.drum_base_spin       = rf(0.04, 0.70)
 	cfg.drum_density_gain    = rf(0.005, 0.12)
+	cfg.drum_radius          = rf(2.0, 4.5)
+	cfg.drum_length          = rf(5.0, 11.0)
 	cfg.whoosh_speed_min     = rf(120.0, 280.0)
 	cfg.whoosh_speed_max     = cfg.whoosh_speed_min + rf(80.0, 360.0)
 
@@ -183,8 +189,9 @@ print_config :: proc() {
 	fmt.eprintf("  smoke:     count=%d  spread=%.1f\n", cfg.smoke_count, cfg.smoke_spread)
 	fmt.eprintf("  shockwave: dur=%.2f  amp=%.1f  sigma=%.1f  wavelength=%.1f\n",
 		cfg.shockwave_duration, cfg.shockwave_amp, cfg.shockwave_sigma, cfg.shockwave_wavelength)
-	fmt.eprintf("  drum:      tumble=%.2f  spin=%.2f  density_gain=%.3f\n",
-		cfg.drum_tumble_duration, cfg.drum_base_spin, cfg.drum_density_gain)
+	fmt.eprintf("  drum:      tumble=%.2f  spin=%.2f  density_gain=%.3f  r=%.2f  len=%.2f\n",
+		cfg.drum_tumble_duration, cfg.drum_base_spin, cfg.drum_density_gain,
+		cfg.drum_radius, cfg.drum_length)
 	fmt.eprintf("  whoosh:    speed=%.0f..%.0f\n", cfg.whoosh_speed_min, cfg.whoosh_speed_max)
 	pc :: proc(name: string, c: rl.Color) {
 		fmt.eprintf("  %s: #%02x%02x%02x (a=%02x)\n", name, c.r, c.g, c.b, c.a)
@@ -219,7 +226,7 @@ print_help :: proc() {
 	fmt.eprintln("  forge-duration, forge-emit-rate")
 	fmt.eprintln("  smoke-count, smoke-spread")
 	fmt.eprintln("  shockwave-duration, shockwave-amp, shockwave-sigma, shockwave-wavelength")
-	fmt.eprintln("  drum-tumble, drum-spin, drum-density-gain")
+	fmt.eprintln("  drum-tumble, drum-spin, drum-density-gain, drum-radius, drum-length")
 	fmt.eprintln("  whoosh-speed-min, whoosh-speed-max")
 	fmt.eprintln()
 	fmt.eprintln("Examples:")
@@ -286,6 +293,8 @@ parse_config_args :: proc() {
 		case "drum-tumble":          if f_ok do cfg.drum_tumble_duration = f32(fval)
 		case "drum-spin":            if f_ok do cfg.drum_base_spin       = f32(fval)
 		case "drum-density-gain":    if f_ok do cfg.drum_density_gain    = f32(fval)
+		case "drum-radius":          if f_ok do cfg.drum_radius          = f32(fval)
+		case "drum-length":          if f_ok do cfg.drum_length          = f32(fval)
 		case "whoosh-speed-min":     if f_ok do cfg.whoosh_speed_min     = f32(fval)
 		case "whoosh-speed-max":     if f_ok do cfg.whoosh_speed_max     = f32(fval)
 		case:

@@ -1043,8 +1043,6 @@ whoosh_consume :: proc() {
 // Spin rate scales with smoothed dirty-row count (htop redraws fast → fast
 // spin; idle vim → glide). Tumbles in/out over ~0.45 s as the screen toggles.
 
-DRUM_RADIUS :: f32(2.0)
-DRUM_HEIGHT :: f32(4.5)
 DRUM_SLICES :: i32(64)
 
 drum_mesh:    rl.Mesh
@@ -1060,17 +1058,44 @@ drum_active:   bool
 drum_dirty_rows: int // counter accumulated by main during cell iteration
 
 init_drum :: proc() {
-	drum_mesh = rl.GenMeshCylinder(DRUM_RADIUS, DRUM_HEIGHT, DRUM_SLICES)
+	drum_mesh = rl.GenMeshCylinder(cfg.drum_radius, cfg.drum_length, DRUM_SLICES)
 
-	// Flip V on side faces: RenderTexture is upside-down when sampled, and the
-	// default cylinder UV maps V=0 to bottom. Flipping puts the top of the TUI
-	// at the top of the cylinder (where it should be).
-	if drum_mesh.texcoords != nil {
-		n := int(drum_mesh.vertexCount)
-		for i in 0 ..< n {
-			drum_mesh.texcoords[i * 2 + 1] = 1.0 - drum_mesh.texcoords[i * 2 + 1]
+	// Reorient cylinder horizontally:
+	//   - Default GenMeshCylinder has axis along +Y, base at y=0.
+	//   - We rotate -90° around Z so axis points along +X, then translate so the
+	//     cylinder is centered on the world origin.
+	//   - UVs are swapped so TUI columns span the cylinder's length (along X)
+	//     and TUI rows wrap around the circumference. The new V is also flipped
+	//     because raylib RenderTextures are vertically inverted when sampled.
+	n := int(drum_mesh.vertexCount)
+	half := cfg.drum_length * 0.5
+	for i in 0 ..< n {
+		px := drum_mesh.vertices[i * 3 + 0]
+		py := drum_mesh.vertices[i * 3 + 1]
+		// (x, y) → (y, -x), then translate -half along X
+		drum_mesh.vertices[i * 3 + 0] = py - half
+		drum_mesh.vertices[i * 3 + 1] = -px
+
+		if drum_mesh.normals != nil {
+			nx := drum_mesh.normals[i * 3 + 0]
+			ny := drum_mesh.normals[i * 3 + 1]
+			drum_mesh.normals[i * 3 + 0] = ny
+			drum_mesh.normals[i * 3 + 1] = -nx
 		}
+
+		if drum_mesh.texcoords != nil {
+			u := drum_mesh.texcoords[i * 2 + 0]
+			v := drum_mesh.texcoords[i * 2 + 1]
+			drum_mesh.texcoords[i * 2 + 0] = v       // length axis = TUI cols
+			drum_mesh.texcoords[i * 2 + 1] = 1.0 - u // around circumference, flipped
+		}
+	}
+	rl.UpdateMeshBuffer(drum_mesh, 0, drum_mesh.vertices, i32(n) * 3 * size_of(f32), 0)
+	if drum_mesh.texcoords != nil {
 		rl.UpdateMeshBuffer(drum_mesh, 1, drum_mesh.texcoords, i32(n) * 2 * size_of(f32), 0)
+	}
+	if drum_mesh.normals != nil {
+		rl.UpdateMeshBuffer(drum_mesh, 2, drum_mesh.normals, i32(n) * 3 * size_of(f32), 0)
 	}
 
 	drum_model = rl.LoadModelFromMesh(drum_mesh)
@@ -1123,6 +1148,6 @@ draw_drum_3d :: proc(term_tex: rl.Texture2D) {
 
 	a := u8(255.0 * drum_visible_alpha())
 	angle_deg := drum_angle * 180.0 / math.PI
-	pos := rl.Vector3{0, -DRUM_HEIGHT * 0.5, 0} // center vertically at origin
-	rl.DrawModelEx(drum_model, pos, {0, 1, 0}, angle_deg, {1, 1, 1}, {255, 255, 255, a})
+	// Mesh is already centered at origin; spin around its long (X) axis.
+	rl.DrawModelEx(drum_model, {0, 0, 0}, {1, 0, 0}, angle_deg, {1, 1, 1}, {255, 255, 255, a})
 }
