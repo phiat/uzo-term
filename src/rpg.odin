@@ -202,6 +202,7 @@ try_reclassify :: proc() {
 	if best == rpg.class do return
 
 	rpg.class = best
+	record_class_det(best)
 	txt := fmt.bprintf(rpg.class_toast_text[:len(rpg.class_toast_text) - 1],
 		"You have become a %s.", class_name(best))
 	rpg.class_toast_len = len(txt)
@@ -218,6 +219,7 @@ update_rpg :: proc(dt: f32) {
 	if rpg.level_up_flash_t > 0 do rpg.level_up_flash_t -= dt
 	if rpg.class_toast_t > 0 do rpg.class_toast_t -= dt
 	teleport_tick(dt)
+	update_modal(dt)
 }
 
 @(private = "file")

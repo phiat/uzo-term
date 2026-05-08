@@ -289,6 +289,15 @@ handle_input :: proc() {
 
 		shift := rl.IsKeyDown(.LEFT_SHIFT) || rl.IsKeyDown(.RIGHT_SHIFT)
 
+		// F8 toggles the character / class-select modal.
+		if key == .F8 {
+			on_modal_toggle()
+			continue
+		}
+		// While the modal is open, give it first crack at the keys it cares
+		// about; unconsumed keys fall through to the PTY.
+		if modal.open && on_modal_input(key) do continue
+
 		// F9 toggles the RPG layer at runtime (state is preserved).
 		if key == .F9 {
 			rpg_active = !rpg_active
@@ -529,6 +538,7 @@ draw_pass1b :: proc(elapsed: f32) {
 	draw_search_overlay()
 	draw_drum_button()
 	draw_rpg_hud()
+	draw_modal()
 	draw_sudo_vignette()
 	rl.EndTextureMode()
 }
