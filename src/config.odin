@@ -58,6 +58,14 @@ Effect_Config :: struct {
 	laser_duration: f32,
 	laser_speed:    f32, // pixels per second
 	laser_lock_hold: f32,
+	// Mouse field (repel-on-motion, attract-on-dwell)
+	mouse_field_enabled:          bool,
+	mouse_field_repel_strength:   f32,
+	mouse_field_attract_strength: f32,
+	mouse_field_repel_radius:     f32,
+	mouse_field_attract_radius:   f32,
+	mouse_field_dwell_seconds:    f32,
+	mouse_field_smoothing:        f32, // higher = faster mode flip
 	// Palette
 	term_bg: rl.Color,
 	fg_color: rl.Color,
@@ -110,6 +118,13 @@ init_config :: proc() {
 		laser_duration       = 2.5,
 		laser_speed          = 450.0,
 		laser_lock_hold      = 0.35,
+		mouse_field_enabled          = true,
+		mouse_field_repel_strength   = 4.5,
+		mouse_field_attract_strength = 2.2,
+		mouse_field_repel_radius     = 120.0,
+		mouse_field_attract_radius   = 280.0,
+		mouse_field_dwell_seconds    = 1.5,
+		mouse_field_smoothing        = 2.5,
 		term_bg              = {0x1d, 0x1f, 0x21, 0xe0},
 		fg_color             = {0xc5, 0xc8, 0xc6, 0xff},
 		cursor_color         = {0xc5, 0xc8, 0xc6, 0xcc},
@@ -178,6 +193,12 @@ randomize_config :: proc() {
 	cfg.laser_duration       = rf(3.0, 9.0)
 	cfg.laser_speed          = rf(180.0, 900.0)
 	cfg.laser_lock_hold      = rf(0.20, 0.70)
+	cfg.mouse_field_repel_strength   = rf(2.0, 8.0)
+	cfg.mouse_field_attract_strength = rf(1.0, 4.0)
+	cfg.mouse_field_repel_radius     = rf(70.0, 180.0)
+	cfg.mouse_field_attract_radius   = rf(180.0, 380.0)
+	cfg.mouse_field_dwell_seconds    = rf(0.8, 2.4)
+	cfg.mouse_field_smoothing        = rf(1.5, 4.0)
 
 	// Random palette — pick a base hue and derive everything from it
 	hue := rand.float32() * 360.0
@@ -220,6 +241,10 @@ print_config :: proc() {
 		cfg.emerge_duration, cfg.emerge_rise_px, cfg.emerge_scale_min)
 	fmt.eprintf("  laser:     dur=%.2f  speed=%.0f  lock_hold=%.2f\n",
 		cfg.laser_duration, cfg.laser_speed, cfg.laser_lock_hold)
+	fmt.eprintf("  mouse:     repel(s=%.1f r=%.0f)  attract(s=%.1f r=%.0f)  dwell=%.2f  smooth=%.2f  on=%v\n",
+		cfg.mouse_field_repel_strength, cfg.mouse_field_repel_radius,
+		cfg.mouse_field_attract_strength, cfg.mouse_field_attract_radius,
+		cfg.mouse_field_dwell_seconds, cfg.mouse_field_smoothing, cfg.mouse_field_enabled)
 	pc :: proc(name: string, c: rl.Color) {
 		fmt.eprintf("  %s: #%02x%02x%02x (a=%02x)\n", name, c.r, c.g, c.b, c.a)
 	}
@@ -241,6 +266,7 @@ print_help :: proc() {
 	fmt.eprintln("  --no-rpg            Disable the RPG layer (default: on; F9 toggles at runtime)")
 	fmt.eprintln("  --rpg-reset         Clear RPG state on launch")
 	fmt.eprintln("  --rpg-class=NAME    Pin class: drifter|cowboy|spider|wizard|operator|icebreaker")
+	fmt.eprintln("  --no-mouse-field    Disable mouse repel/attract field")
 	fmt.eprintln()
 	fmt.eprintln("Per-param overrides (--name=value):")
 	fmt.eprintln("  shake-duration, shake-intensity")
@@ -260,6 +286,9 @@ print_help :: proc() {
 	fmt.eprintln("  whoosh-speed-min, whoosh-speed-max")
 	fmt.eprintln("  emerge-duration, emerge-rise, emerge-scale-min")
 	fmt.eprintln("  laser-duration, laser-speed, laser-lock-hold")
+	fmt.eprintln("  mouse-field-repel-strength, mouse-field-attract-strength")
+	fmt.eprintln("  mouse-field-repel-radius, mouse-field-attract-radius")
+	fmt.eprintln("  mouse-field-dwell, mouse-field-smoothing")
 	fmt.eprintln()
 	fmt.eprintln("Examples:")
 	fmt.eprintln("  uzo-term --rand")
@@ -286,6 +315,10 @@ parse_config_args :: proc() {
 		}
 		if arg == "--rpg-reset" {
 			rpg_reset()
+			continue
+		}
+		if arg == "--no-mouse-field" {
+			cfg.mouse_field_enabled = false
 			continue
 		}
 		if !strings.has_prefix(arg, "--") {
@@ -353,6 +386,12 @@ parse_config_args :: proc() {
 		case "laser-duration":       if f_ok do cfg.laser_duration       = f32(fval)
 		case "laser-speed":          if f_ok do cfg.laser_speed          = f32(fval)
 		case "laser-lock-hold":      if f_ok do cfg.laser_lock_hold      = f32(fval)
+		case "mouse-field-repel-strength":   if f_ok do cfg.mouse_field_repel_strength   = f32(fval)
+		case "mouse-field-attract-strength": if f_ok do cfg.mouse_field_attract_strength = f32(fval)
+		case "mouse-field-repel-radius":     if f_ok do cfg.mouse_field_repel_radius     = f32(fval)
+		case "mouse-field-attract-radius":   if f_ok do cfg.mouse_field_attract_radius   = f32(fval)
+		case "mouse-field-dwell":            if f_ok do cfg.mouse_field_dwell_seconds    = f32(fval)
+		case "mouse-field-smoothing":        if f_ok do cfg.mouse_field_smoothing        = f32(fval)
 		case:
 			fmt.eprintf("unknown effect param: --%s (try --help)\n", name)
 		}

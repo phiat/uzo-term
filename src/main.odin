@@ -432,6 +432,7 @@ draw_frame :: proc() {
 
 	dt := rl.GetFrameTime()
 	update_idle()
+	if cfg.mouse_field_enabled do update_mouse_field()
 	update_rpg(dt)
 	update_camera_fly()
 	update_pwd_tint(dt)
@@ -640,11 +641,14 @@ draw_cell :: proc(col: u16, row: u16, row_cells_h: gvt.Render_State_Row_Cells, c
 	scale := cell_effect_scale()
 	gx, gy := gravity_offset(col, row)
 	ix, iy := idle_drift_offset(col, row)
+	mfx, mfy: f32
+	if cfg.mouse_field_enabled do mfx, mfy = mouse_field_offset(col, row)
 	ls_dx, ls_scale := ls_cell_offset(col, row)
 	sw_dx := shockwave_offset(row)
 	em_dy, em_scale, em_alpha := emerge_offset(row)
 	gx *= scale; gy *= scale
 	ix *= scale; iy *= scale
+	mfx *= scale; mfy *= scale
 	ls_dx *= scale
 	sw_dx *= scale
 	em_dy *= scale
@@ -652,8 +656,8 @@ draw_cell :: proc(col: u16, row: u16, row_cells_h: gvt.Render_State_Row_Cells, c
 	// emerge/ls scaling matches the muted positional offsets.
 	ls_scale = 1.0 + (ls_scale - 1.0) * scale
 	em_scale = 1.0 + (em_scale - 1.0) * scale
-	px := base_x + gx + ix + ls_dx + sw_dx
-	py := base_y + gy + iy + em_dy
+	px := base_x + gx + ix + mfx + ls_dx + sw_dx
+	py := base_y + gy + iy + mfy + em_dy
 
 	bg_rgb: gvt.Color_Rgb
 	if gvt.render_state_row_cells_get(row_cells_h, .BG_COLOR, &bg_rgb) == .SUCCESS {
