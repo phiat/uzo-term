@@ -65,9 +65,10 @@ register_drifter_tree :: proc "contextless" () {
 	register_skill_node(C, Skill_Node{
 		id = 17, kind = .SMALL, branch = 0, x = 0, y = -5,
 		prereqs = {13},
-		name    = "Trail Blazer",
-		desc    = "Trail particles last +20%.",
-		payload = .STAT_MOD, payload_value = 0.20,
+		name       = "Trail Blazer",
+		desc       = "Trail particles last +20%.",
+		payload    = .STAT_MOD,
+		payload_id = u16(Stat_Effect.TRAIL_LIFE_PCT), payload_value = 0.20,
 	})
 	register_skill_node(C, Skill_Node{
 		id = 21, kind = .NOTABLE, branch = 0, x = 0, y = -6,
@@ -88,9 +89,10 @@ register_drifter_tree :: proc "contextless" () {
 	register_skill_node(C, Skill_Node{
 		id = 2, kind = .SMALL, branch = 1, x = 1, y = 0,
 		prereqs = {0},
-		name    = "Sharp Eye",
-		desc    = "Search highlight brightness +20%.",
-		payload = .STAT_MOD, payload_value = 0.20,
+		name       = "Sharp Eye",
+		desc       = "Search highlight brightness +20%.",
+		payload    = .STAT_MOD,
+		payload_id = u16(Stat_Effect.SEARCH_BRIGHTNESS_PCT), payload_value = 0.20,
 	})
 	register_skill_node(C, Skill_Node{
 		id = 6, kind = .SMALL, branch = 1, x = 2, y = 0,
@@ -114,9 +116,10 @@ register_drifter_tree :: proc "contextless" () {
 	register_skill_node(C, Skill_Node{
 		id = 18, kind = .SMALL, branch = 1, x = 5, y = 0,
 		prereqs = {14},
-		name    = "Curio Hunter",
-		desc    = "Gold drop value +10%.",
-		payload = .STAT_MOD, payload_value = 0.10,
+		name       = "Curio Hunter",
+		desc       = "Gold drop value +10%.",
+		payload    = .STAT_MOD,
+		payload_id = u16(Stat_Effect.GOLD_DROP_VALUE_PCT), payload_value = 0.10,
 	})
 	register_skill_node(C, Skill_Node{
 		id = 22, kind = .NOTABLE, branch = 1, x = 6, y = 0,
@@ -135,16 +138,18 @@ register_drifter_tree :: proc "contextless" () {
 	register_skill_node(C, Skill_Node{
 		id = 3, kind = .SMALL, branch = 2, x = 0, y = 1,
 		prereqs = {0},
-		name    = "Steady Step",
-		desc    = "Shake amplitude -10%.",
-		payload = .STAT_MOD, payload_value = -0.10,
+		name       = "Steady Step",
+		desc       = "Shake amplitude -10%.",
+		payload    = .STAT_MOD,
+		payload_id = u16(Stat_Effect.SHAKE_PCT), payload_value = -0.10,
 	})
 	register_skill_node(C, Skill_Node{
 		id = 7, kind = .SMALL, branch = 2, x = 0, y = 2,
 		prereqs = {3},
-		name    = "Bracing",
-		desc    = "Shake amplitude -10% (stacking).",
-		payload = .STAT_MOD, payload_value = -0.10,
+		name       = "Bracing",
+		desc       = "Shake amplitude -10% (stacking).",
+		payload    = .STAT_MOD,
+		payload_id = u16(Stat_Effect.SHAKE_PCT), payload_value = -0.10,
 	})
 	register_skill_node(C, Skill_Node{
 		id = 11, kind = .NOTABLE, branch = 2, x = 0, y = 3,
@@ -156,16 +161,18 @@ register_drifter_tree :: proc "contextless" () {
 	register_skill_node(C, Skill_Node{
 		id = 15, kind = .SMALL, branch = 2, x = 0, y = 4,
 		prereqs = {11},
-		name    = "Anchored",
-		desc    = "Gravity strength -20%.",
-		payload = .STAT_MOD, payload_value = -0.20,
+		name       = "Anchored",
+		desc       = "Gravity strength -20%.",
+		payload    = .STAT_MOD,
+		payload_id = u16(Stat_Effect.GRAVITY_PCT), payload_value = -0.20,
 	})
 	register_skill_node(C, Skill_Node{
 		id = 19, kind = .SMALL, branch = 2, x = 0, y = 5,
 		prereqs = {15},
-		name    = "Quiet Mind",
-		desc    = "Drum-up duration -10%.",
-		payload = .STAT_MOD, payload_value = -0.10,
+		name       = "Quiet Mind",
+		desc       = "Drum-up duration -10%.",
+		payload    = .STAT_MOD,
+		payload_id = u16(Stat_Effect.DRUM_DURATION_PCT), payload_value = -0.10,
 	})
 	register_skill_node(C, Skill_Node{
 		id = 23, kind = .NOTABLE, branch = 2, x = 0, y = 6,
@@ -191,23 +198,26 @@ register_drifter_tree :: proc "contextless" () {
 	register_skill_node(C, Skill_Node{
 		id = 8, kind = .SMALL, branch = 3, x = -2, y = 0,
 		prereqs = {4},
-		name    = "Salvager",
-		desc    = "Gold drop chance +5%.",
-		payload = .STAT_MOD, payload_value = 0.05,
+		name       = "Salvager",
+		desc       = "Gold drop chance +5%.",
+		payload    = .STAT_MOD,
+		payload_id = u16(Stat_Effect.GOLD_DROP_CHANCE_PCT), payload_value = 0.05,
 	})
 	register_skill_node(C, Skill_Node{
 		id = 12, kind = .NOTABLE, branch = 3, x = -3, y = 0,
 		prereqs = {8},
-		name    = "Wages",
-		desc    = "XP per command +5.",
-		payload = .STAT_MOD, payload_value = 5,
+		name       = "Wages",
+		desc       = "XP per command +5.",
+		payload    = .STAT_MOD,
+		payload_id = u16(Stat_Effect.XP_PER_CMD_BONUS), payload_value = 5,
 	})
 	register_skill_node(C, Skill_Node{
 		id = 16, kind = .SMALL, branch = 3, x = -4, y = 0,
 		prereqs = {12},
-		name    = "Coinpouch",
-		desc    = "Gold drop value +10%.",
-		payload = .STAT_MOD, payload_value = 0.10,
+		name       = "Coinpouch",
+		desc       = "Gold drop value +10%.",
+		payload    = .STAT_MOD,
+		payload_id = u16(Stat_Effect.GOLD_DROP_VALUE_PCT), payload_value = 0.10,
 	})
 	register_skill_node(C, Skill_Node{
 		id = 20, kind = .SMALL, branch = 3, x = -5, y = 0,
@@ -219,9 +229,10 @@ register_drifter_tree :: proc "contextless" () {
 	register_skill_node(C, Skill_Node{
 		id = 24, kind = .NOTABLE, branch = 3, x = -6, y = 0,
 		prereqs = {20},
-		name    = "Merchant's Eye",
-		desc    = "Gold drop chance +10%.",
-		payload = .STAT_MOD, payload_value = 0.10,
+		name       = "Merchant's Eye",
+		desc       = "Gold drop chance +10%.",
+		payload    = .STAT_MOD,
+		payload_id = u16(Stat_Effect.GOLD_DROP_CHANCE_PCT), payload_value = 0.10,
 	})
 	register_skill_node(C, Skill_Node{
 		id = 28, kind = .CAPSTONE, branch = 3, x = -7, y = 0,
@@ -234,7 +245,9 @@ register_drifter_tree :: proc "contextless" () {
 	register_skill_node(C, Skill_Node{
 		id = 29, kind = .CAPSTONE, branch = 255, x = 1.4, y = -1.4,
 		prereqs = {1, 2, 3, 4},
-		name    = "Vagabond",
-		desc    = "XP gains +50%. Stacks with all other multipliers.",
+		name       = "Vagabond",
+		desc       = "XP gains +50%. Stacks with all other multipliers.",
+		payload    = .STAT_MOD,
+		payload_id = u16(Stat_Effect.XP_GAIN_PCT), payload_value = 0.50,
 	})
 }
