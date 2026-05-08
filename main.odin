@@ -85,6 +85,7 @@ camera: rl.Camera3D
 main :: proc() {
 	// -- Effect config (before anything else so --rand seeds early) --
 	init_config()
+	init_rpg()
 	parse_config_args()
 
 	// -- Init ghostty-vt terminal (wrapper handles render-state alloc + teardown atomically) --
@@ -249,6 +250,7 @@ handle_input :: proc() {
 		n := r.encode_utf8(buf[:], ch)
 		p.write_bytes(&pty, buf[:n])
 		on_keypress_rhythm()
+		on_rpg_keypress(ch)
 		reset_idle()
 		trigger_key_drop(ch)
 		push_trail_point(
@@ -286,6 +288,12 @@ handle_input :: proc() {
 		}
 
 		shift := rl.IsKeyDown(.LEFT_SHIFT) || rl.IsKeyDown(.RIGHT_SHIFT)
+
+		// F9 toggles the RPG layer at runtime (state is preserved).
+		if key == .F9 {
+			rpg_active = !rpg_active
+			continue
+		}
 
 		// Ctrl+Shift+V: paste from system clipboard via libghostty-vt's encoder
 		// (handles bracketed-paste wrapping + unsafe byte stripping).
@@ -340,6 +348,7 @@ handle_command_line :: proc() {
 	if input_line_len == 0 {
 		line = strip_prompt(string(cursor_row_buf[:cursor_row_len]))
 	}
+	on_rpg_command(line)
 	if contains(line, "sudo") {
 		on_sudo_detected()
 	} else if len(line) > 0 {
@@ -396,6 +405,7 @@ draw_frame :: proc() {
 
 	dt := rl.GetFrameTime()
 	update_idle()
+	update_rpg(dt)
 	update_camera_fly()
 	update_pwd_tint(dt)
 	update_forge(dt)
@@ -513,6 +523,7 @@ draw_pass1b :: proc(elapsed: f32) {
 
 	draw_search_overlay()
 	draw_drum_button()
+	draw_rpg_hud()
 	draw_sudo_vignette()
 	rl.EndTextureMode()
 }
