@@ -360,7 +360,7 @@ handle_command_line :: proc() {
 			trigger_search(needle)
 		}
 	}
-	if len(line) >= 2 && line[:2] == "cd" {
+	if len(line) >= 2 && line[:2] == "cd" && (len(line) == 2 || line[2] == ' ') {
 		dir := "~"
 		row_text := string(cursor_row_buf[:cursor_row_len])
 		cd_pos := -1
@@ -791,11 +791,26 @@ handle_hyperlink_click :: proc() {
 	buf: [4096]u8
 	uri, has := hyperlink_at(col, row, buf[:])
 	if !has do return
+	if !uri_scheme_allowed(uri) do return
 	open_url(uri)
+}
+
+// OSC 8 URIs come from terminal output and may be attacker-controlled.
+// Restrict click-through to schemes that xdg-open should reasonably handle
+// for end-user navigation; reject file:, javascript:, data:, and anything
+// else that could turn into local file disclosure or code execution.
+uri_scheme_allowed :: proc(uri: string) -> bool {
+	allowed := []string{"http://", "https://", "mailto:", "ftp://", "ftps://"}
+	for prefix in allowed {
+		if len(uri) >= len(prefix) && uri[:len(prefix)] == prefix do return true
+	}
+	return false
 }
 
 // Spawn `xdg-open <url>` without going through a shell. posix_spawnp returns
 // immediately; we don't wait for the child (xdg-open backgrounds itself).
+// Inherit the parent environment — xdg-open relies on DISPLAY / WAYLAND_DISPLAY
+// / XDG_* / PATH to locate a browser.
 open_url :: proc(url: string) {
 	url_c, err := strings.clone_to_cstring(url)
 	if err != nil do return
@@ -803,7 +818,7 @@ open_url :: proc(url: string) {
 
 	argv := [3]cstring{"xdg-open", url_c, nil}
 	pid: posix.pid_t
-	posix.posix_spawnp(&pid, "xdg-open", nil, nil, raw_data(&argv), nil)
+	posix.posix_spawnp(&pid, "xdg-open", nil, nil, raw_data(&argv), posix.environ)
 }
 
 // Color and UTF-8 helpers live in `ghosdin:render_rl` (`r.to_rl_color`,
