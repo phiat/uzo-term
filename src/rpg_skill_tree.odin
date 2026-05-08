@@ -123,8 +123,9 @@ allocate_node :: proc(c: RPG_Class, id: u8) -> bool {
 }
 
 // Sum every allocated STAT_MOD node's payload_value for one Stat_Effect on
-// the player's current class tree. Use this everywhere a scalar tweak
-// reads a config value: e.g. f := cfg.x * (1 + sum_stat_mod(..., .X_PCT)).
+// the player's current class tree. For flat bonuses (e.g. XP_PER_CMD_BONUS),
+// add the result directly. For multipliers, prefer stat_mult below — it
+// folds the +1 baseline and clamps to 0 so stacked negatives can't invert.
 sum_stat_mod :: proc(c: RPG_Class, effect: Stat_Effect) -> f32 {
 	if !rpg_active do return 0
 	sum: f32 = 0
@@ -138,6 +139,13 @@ sum_stat_mod :: proc(c: RPG_Class, effect: Stat_Effect) -> f32 {
 		sum += n.payload_value
 	}
 	return sum
+}
+
+// Multiplier helper for STAT_MOD effects: returns max(0, 1 + sum). Use this
+// at every config-value scaling site so stacked negative payload_values
+// don't invert the effect (negative shake / negative duration produce bugs).
+stat_mult :: #force_inline proc(c: RPG_Class, effect: Stat_Effect) -> f32 {
+	return max(0, 1.0 + sum_stat_mod(c, effect))
 }
 
 // Refund a node and any dependents whose only path back to the starter

@@ -134,13 +134,17 @@ on_rpg_keypress :: proc(ch: rune) {
 	// Skip C0/C1 control codes + DEL; everything else (including non-ASCII
 	// printable codepoints — emoji, CJK, etc.) earns XP.
 	if ch < 32 || (ch >= 127 && ch <= 159) do return
-	rpg.xp += XP_PER_CHAR
+	rpg.xp += u64(f32(XP_PER_CHAR) * stat_mult(rpg.class, .XP_GAIN_PCT))
 	check_level_up()
 }
 
 on_rpg_command :: proc(line: string) {
 	if !rpg_active do return
-	rpg.xp += XP_PER_ENTER
+	// XP_PER_CMD_BONUS is a flat add (Cowboy "First Commit" +3 etc.);
+	// XP_GAIN_PCT is a multiplier on the total. Both per-command and
+	// per-keypress XP run through the same XP_GAIN_PCT pool.
+	bonus := i64(sum_stat_mod(rpg.class, .XP_PER_CMD_BONUS))
+	rpg.xp += u64(f32(XP_PER_ENTER + bonus) * stat_mult(rpg.class, .XP_GAIN_PCT))
 
 	cmd := first_command(line)
 	if len(cmd) > 0 {

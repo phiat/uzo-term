@@ -94,7 +94,10 @@ drum_set_alt :: proc(alt: bool) {
 }
 
 update_drum :: proc(dt: f32) {
-	rate := dt / cfg.drum_tumble_duration
+	// Tree nodes named "Drum-up duration -X%" reduce this duration via
+	// DRUM_DURATION_PCT; clamp at a tiny floor so rate never explodes.
+	dur := max(0.05, cfg.drum_tumble_duration * stat_mult(rpg.class, .DRUM_DURATION_PCT))
+	rate := dt / dur
 	if drum_t < drum_target_t {
 		drum_t = min(drum_target_t, drum_t + rate)
 	} else if drum_t > drum_target_t {
