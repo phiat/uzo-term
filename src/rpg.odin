@@ -235,11 +235,8 @@ draw_xp_bar :: proc(x, y, w, h: f32, progress: f32) {
 draw_rpg_hud :: proc() {
 	if !rpg_active do return
 
-	// Permanent biome underlay (post-Lv-10 class-themed border) renders first
-	// so the HUD pill and any flash sits over it.
-	draw_biome_overlay()
-
-	// Spell-owned full-screen overlays render after so the HUD pill stays on top.
+	// Spell-owned full-screen overlays render first so the HUD pill stays on top.
+	// (Biome underlay is drawn earlier, in draw_pass1b, so it sits behind cells.)
 	draw_teleport_flash()
 
 	margin_x: f32 = 12

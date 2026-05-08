@@ -510,6 +510,11 @@ draw_pass1b :: proc(elapsed: f32) {
 
 	draw_cd_labels()
 
+	// Biome underlay (post-Lv-10 class-themed border) — sits between the 3D
+	// scene and the cell layer so cells composite over it. Visible most
+	// strongly during cd-fly + drum mode where the cell layer thins out.
+	if rpg_active do draw_biome_overlay()
+
 	// Flat terminal overlay — fades out as the drum tumbles in
 	flat_a := u8(255.0 * flat_visible_alpha())
 	if flat_a > 0 {
