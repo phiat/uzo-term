@@ -614,6 +614,10 @@ draw_cell :: proc(col: u16, row: u16, row_cells_h: gvt.Render_State_Row_Cells, c
 	ls_dx *= scale
 	sw_dx *= scale
 	em_dy *= scale
+	// Size multipliers — attenuate the deviation from 1.0 so the on-drum
+	// emerge/ls scaling matches the muted positional offsets.
+	ls_scale = 1.0 + (ls_scale - 1.0) * scale
+	em_scale = 1.0 + (em_scale - 1.0) * scale
 	px := base_x + gx + ix + ls_dx + sw_dx
 	py := base_y + gy + iy + em_dy
 
