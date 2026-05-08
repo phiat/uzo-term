@@ -37,7 +37,11 @@ Spell :: struct {
 	trigger:        Spell_Trigger,
 	match:          Spell_Match,
 	fire:           proc(),
-	one_shot:       bool, // ON_LEVEL_UP defaults true; ON_COMMAND can opt in
+	// ON_LEVEL_UP spells should set this true (otherwise they re-fire on every
+	// keypress past the threshold). ON_COMMAND spells can opt in for once-only
+	// behavior. dispatch_levelup_spells force-marks ON_LEVEL_UP fires done as
+	// a safety net so a forgotten one_shot=true can't spam.
+	one_shot:       bool,
 	// Runtime state
 	cast_done: bool,
 }

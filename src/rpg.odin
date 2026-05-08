@@ -115,7 +115,9 @@ current_level_progress :: proc() -> (have, need: u64) {
 
 on_rpg_keypress :: proc(ch: rune) {
 	if !rpg_active do return
-	if ch < 32 || ch > 126 do return // printable ASCII only
+	// Skip C0/C1 control codes + DEL; everything else (including non-ASCII
+	// printable codepoints — emoji, CJK, etc.) earns XP.
+	if ch < 32 || (ch >= 127 && ch <= 159) do return
 	rpg.xp += XP_PER_CHAR
 	check_level_up()
 }
@@ -175,23 +177,24 @@ trigger_level_up :: proc() {
 
 @(private = "file")
 try_reclassify :: proc() {
-	counts: [6]int
+	// Sized to the enum so adding a class doesn't require touching this loop.
+	counts: [RPG_Class]int
 	total := 0
 	for i in 0 ..< COMMAND_LOG_LEN {
 		slot := &rpg.command_log[i]
 		if slot.cmd_len == 0 do continue
 		verb := string(slot.cmd[:slot.cmd_len])
-		counts[int(classify_verb(verb))] += 1
+		counts[classify_verb(verb)] += 1
 		total += 1
 	}
 	if total < 5 do return
 
 	best := rpg.class
 	best_count := 0
-	for i in 0 ..< 6 {
-		if counts[i] > best_count {
-			best_count = counts[i]
-			best = RPG_Class(i)
+	for c in RPG_Class {
+		if counts[c] > best_count {
+			best_count = counts[c]
+			best = c
 		}
 	}
 	if f32(best_count) / f32(total) < CLASS_THRESHOLD do return
