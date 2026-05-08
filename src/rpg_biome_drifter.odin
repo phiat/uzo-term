@@ -12,6 +12,12 @@ import rl "vendor:raylib"
 @(private = "file") DRIFTER_AMBER_DIM := rl.Color{255, 180, 60, 50}
 @(private = "file") SAMPLES           :: 64
 
+@(init, private = "file")
+register_drifter_biome :: proc "contextless" () {
+	register_biome(.DRIFTER, draw_drifter_biome)
+}
+
+@(private = "file")
 draw_drifter_biome :: proc() {
 	w := f32(window_w)
 	t := elapsed_g
