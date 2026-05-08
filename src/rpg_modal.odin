@@ -235,11 +235,31 @@ draw_modal :: proc() {
 
 	y += 16
 	draw_text("INVENTORY", col_r, y, 14, accent); y += 22
-	draw_text("(empty - items arrive in Phase 2)", col_r + 4, y, 12, dim); y += 22
-	draw_text("Weapon  : --", col_r + 4, y, 13, dim); y += 18
-	draw_text("Armor   : --", col_r + 4, y, 13, dim); y += 18
-	draw_text("Charm   : --", col_r + 4, y, 13, dim); y += 18
-	draw_text("Items   : 0 / 12", col_r + 4, y, 13, dim)
+
+	gold_buf: [32]u8
+	gold_str := fmt.bprintf(gold_buf[:31], "%d", rpg.gold)
+	draw_stat_line(col_r + 4, y, "Gold", string(gold_str), fg); y += 18
+
+	cap_now := inventory_capacity()
+	count_buf: [32]u8
+	count_str := fmt.bprintf(count_buf[:31], "%d / %d", inventory_count(), cap_now)
+	draw_stat_line(col_r + 4, y, "Slots", string(count_str), fg); y += 22
+
+	// List the items the player has actually picked up. Empty inventory shows
+	// a quiet hint instead of a row of placeholders.
+	if rpg.inventory_n == 0 {
+		draw_text("(no items yet — drops fire on commands)", col_r + 4, y, 12, dim)
+	} else {
+		for i in 0 ..< int(rpg.inventory_n) {
+			id := rpg.inventory[i]
+			line_buf: [48]u8
+			line_str := fmt.bprintf(line_buf[:47], "%c %s", item_glyph(id), item_name(id))
+			line_buf[len(line_str)] = 0
+			draw_text(cstring(&line_buf[0]), col_r + 4, y, 13, fg)
+			y += 16
+			if y > panel_y + PANEL_H - 50 do break
+		}
+	}
 
 	// Footer
 	foot_y := panel_y + PANEL_H - 28

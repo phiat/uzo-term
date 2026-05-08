@@ -36,6 +36,7 @@ rpg_active: bool = true // default-on; --no-rpg flips, F9 toggles
 @(private = "file") LEVEL_UP_FLASH_DURATION :: f32(1.5)
 @(private = "file") CLASS_TOAST_DURATION    :: f32(3.0)
 @(private = "file") CLASS_TOAST_FADE_IN     :: f32(0.85)
+DROP_TOAST_DURATION :: f32(1.4) // pkg-visible — rpg_items.odin reads it
 
 // ---------------------------------------------------------------------------
 // Classes (table lives in rpg_classes.odin)
@@ -58,6 +59,11 @@ RPG_Class :: enum u8 {
 
 // Phase 2 — skill tree + economy. Fixed at 30 nodes per tree per uzo-ad8.
 SKILL_NODES_PER_TREE :: 30
+
+// Inventory cap = INVENTORY_BASE_SLOTS + (allocated ITEM_GRANT nodes on current
+// class). Hard array max sized for all 6 classes' item-grant nodes (+ headroom).
+INVENTORY_BASE_SLOTS :: 4
+INVENTORY_MAX_SLOTS  :: 12
 
 @(private = "file")
 Command_Tally :: struct {
@@ -87,6 +93,16 @@ RPG_State :: struct {
 	skill_points: u16,
 	allocated:    [RPG_Class][SKILL_NODES_PER_TREE]bool,
 	gold:         u32,
+
+	// Inventory — packed array, inventory_n marks the live tail. Drops push,
+	// auto-sell when full. Uninitialized slots hold .NONE.
+	inventory:   [INVENTORY_MAX_SLOTS]Item_Id,
+	inventory_n: u8,
+
+	// Drop toast — a brief rising "+N gold" / "+ITEM" near the cursor.
+	drop_toast_t:    f32,
+	drop_toast_text: [32]u8,
+	drop_toast_len:  int,
 }
 
 rpg: RPG_State
@@ -164,6 +180,7 @@ on_rpg_command :: proc(line: string) {
 
 	dispatch_command_spells(line)
 	check_level_up()
+	try_command_drop()
 }
 
 @(private = "file")
@@ -235,6 +252,7 @@ update_rpg :: proc(dt: f32) {
 	if !rpg_active do return
 	if rpg.level_up_flash_t > 0 do rpg.level_up_flash_t -= dt
 	if rpg.class_toast_t > 0 do rpg.class_toast_t -= dt
+	if rpg.drop_toast_t > 0 do rpg.drop_toast_t -= dt
 	tick_spells(dt)
 	update_modal(dt)
 }
@@ -257,6 +275,7 @@ draw_rpg_hud :: proc() {
 	// Spell-owned full-screen overlays render first so the HUD pill stays on top.
 	// (Biome underlay is drawn earlier, in draw_pass1b, so it sits behind cells.)
 	draw_spells()
+	draw_drop_toast()
 
 	margin_x: f32 = 12
 	margin_y: f32 = 42 // 12 base + 30 lift
@@ -271,9 +290,13 @@ draw_rpg_hud :: proc() {
 
 	have, need := current_level_progress()
 
-	left_buf:  [64]u8
+	// Left: "Lv 7  Cowboy  $123 [3/5]" — class HUD now folds in gold + inv.
+	left_buf:  [96]u8
 	right_buf: [32]u8
-	left_cs,  _ := fmt_cstr(left_buf[:],  "Lv %d  %s", rpg.level, class_name(rpg.class))
+	left_cs,  _ := fmt_cstr(left_buf[:],
+		"Lv %d  %s  $%d [%d/%d]",
+		rpg.level, class_name(rpg.class),
+		rpg.gold, inventory_count(), inventory_capacity())
 	right_cs, _ := fmt_cstr(right_buf[:], "%d/%d", have, need)
 
 	font_sz: f32 = 22
