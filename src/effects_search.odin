@@ -100,10 +100,11 @@ draw_search_overlay :: proc() {
 	if !search_active do return
 
 	// Active row locks — red highlight that fades over laser_lock_hold.
+	bright := stat_mult(rpg.class, .SEARCH_BRIGHTNESS_PCT)
 	for r in 0 ..< TERM_ROWS {
 		if search_lock_until[r] <= elapsed_g do continue
 		t := (search_lock_until[r] - elapsed_g) / cfg.laser_lock_hold
-		a := u8(140.0 * t)
+		a := u8(clamp(140.0 * t * bright, 0, 255))
 		rl.DrawRectangle(0, i32(r) * cell_h + PADDING, window_w, cell_h, {255, 70, 60, a})
 	}
 

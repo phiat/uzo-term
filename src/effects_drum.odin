@@ -94,7 +94,10 @@ drum_set_alt :: proc(alt: bool) {
 }
 
 update_drum :: proc(dt: f32) {
-	rate := dt / cfg.drum_tumble_duration
+	// Tree nodes named "Drum-up duration -X%" reduce this duration via
+	// DRUM_DURATION_PCT; clamp at a tiny floor so rate never explodes.
+	dur := max(0.05, cfg.drum_tumble_duration * stat_mult(rpg.class, .DRUM_DURATION_PCT))
+	rate := dt / dur
 	if drum_t < drum_target_t {
 		drum_t = min(drum_target_t, drum_t + rate)
 	} else if drum_t > drum_target_t {
@@ -198,6 +201,14 @@ drum_visible_alpha :: proc() -> f32 {
 
 flat_visible_alpha :: proc() -> f32 {
 	return 1.0 - drum_visible_alpha()
+}
+
+// Multiplier for "loud" cell-level effects (gravity pull, idle drift,
+// shockwave, emerge tween, ls race-in, glitch scatter). Drops from 1.0
+// when flat to 0.25 when the drum is fully up — keeps the wrapped TUI
+// legible on the cylinder surface without disabling the effects entirely.
+cell_effect_scale :: proc() -> f32 {
+	return 1.0 - drum_t * 0.75
 }
 
 draw_drum_3d :: proc(term_tex: rl.Texture2D) {

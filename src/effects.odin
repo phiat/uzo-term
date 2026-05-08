@@ -33,7 +33,7 @@ update_shake :: proc(elapsed: f32) -> rl.Vector2 {
 	if shake_timer <= 0 do return {}
 	shake_timer -= dt
 	t := shake_timer / cfg.shake_duration
-	mag := cfg.shake_intensity * t
+	mag := cfg.shake_intensity * stat_mult(rpg.class, .SHAKE_PCT) * t
 	return {mag * math.sin(elapsed * 127.1), mag * math.cos(elapsed * 71.7)}
 }
 
@@ -60,15 +60,17 @@ push_trail_point :: proc(x, y: f32) {
 
 draw_cursor_trail :: proc() {
 	dt := rl.GetFrameTime()
+	fade := cfg.trail_fade * stat_mult(rpg.class, .TRAIL_LIFE_PCT)
+	if fade < 0.01 do return // trail effectively disabled
 	for i in 0 ..< TRAIL_LEN {
 		pt := &cursor_trail[i]
 		if !pt.alive do continue
 		pt.age += dt
-		if pt.age >= cfg.trail_fade {
+		if pt.age >= fade {
 			pt.alive = false
 			continue
 		}
-		t := 1.0 - pt.age / cfg.trail_fade
+		t := 1.0 - pt.age / fade
 		alpha := u8(t * 65)
 		rl.DrawRectangleLines(i32(pt.x), i32(pt.y), cell_w, cell_h, {cfg.fg_color.r, cfg.fg_color.g, cfg.fg_color.b, alpha})
 	}
@@ -92,7 +94,7 @@ gravity_offset :: proc(col, row: u16) -> (dx, dy: f32) {
 	if dist_sq > cfg.gravity_radius * cfg.gravity_radius || dist_sq < 1 do return 0, 0
 	dist := math.sqrt(dist_sq)
 	t := 1.0 - dist / cfg.gravity_radius
-	mag := cfg.gravity_strength * t * t
+	mag := cfg.gravity_strength * stat_mult(rpg.class, .GRAVITY_PCT) * t * t
 	return vx / dist * mag, vy / dist * mag
 }
 
@@ -150,8 +152,11 @@ glitch_timers: [TERM_ROWS][TERM_COLS]f32
 glitch_chars:  [TERM_ROWS][TERM_COLS]rune
 
 // Called when new PTY output arrives — scatters glitch timers with fixed chars.
+// Scatter count drops with cell_effect_scale so drum-wrapped output isn't
+// constantly substituted with random glyphs.
 trigger_glitch :: proc() {
-	for _ in 0 ..< cfg.glitch_scatter {
+	scatter := int(f32(cfg.glitch_scatter) * cell_effect_scale())
+	for _ in 0 ..< scatter {
 		r := rand.int_max(TERM_ROWS)
 		c := rand.int_max(TERM_COLS)
 		glitch_timers[r][c] = 0.04 + rand.float32() * (cfg.glitch_duration_max - 0.04)
@@ -202,7 +207,8 @@ update_idle :: proc() {
 idle_drift_offset :: proc(col, row: u16) -> (dx, dy: f32) {
 	if idle_strength <= 0 do return 0, 0
 	phase := f32(col) * 0.73 + f32(row) * 1.27
-	dx = math.sin(elapsed_g * 0.68 + phase) * cfg.idle_drift_max * idle_strength
-	dy = math.cos(elapsed_g * 0.51 + phase * 0.88) * cfg.idle_drift_max * idle_strength * 0.65
+	amp := cfg.idle_drift_max * stat_mult(rpg.class, .IDLE_DRIFT_PCT)
+	dx = math.sin(elapsed_g * 0.68 + phase) * amp * idle_strength
+	dy = math.cos(elapsed_g * 0.51 + phase * 0.88) * amp * idle_strength * 0.65
 	return
 }

@@ -238,6 +238,9 @@ print_help :: proc() {
 	fmt.eprintln("Flags:")
 	fmt.eprintln("  --help              Show this help and exit")
 	fmt.eprintln("  --rand              Randomize all effect tunables (and print them)")
+	fmt.eprintln("  --no-rpg            Disable the RPG layer (default: on; F9 toggles at runtime)")
+	fmt.eprintln("  --rpg-reset         Clear RPG state on launch")
+	fmt.eprintln("  --rpg-class=NAME    Pin class: drifter|cowboy|spider|wizard|operator|icebreaker")
 	fmt.eprintln()
 	fmt.eprintln("Per-param overrides (--name=value):")
 	fmt.eprintln("  shake-duration, shake-intensity")
@@ -276,6 +279,15 @@ parse_config_args :: proc() {
 			did_rand = true
 			continue
 		}
+		// Boolean / no-value RPG flags handled before the --name=value parser.
+		if arg == "--no-rpg" {
+			rpg_active = false
+			continue
+		}
+		if arg == "--rpg-reset" {
+			rpg_reset()
+			continue
+		}
 		if !strings.has_prefix(arg, "--") {
 			fmt.eprintf("ignored arg (expected --name=value): %s\n", arg)
 			continue
@@ -288,6 +300,14 @@ parse_config_args :: proc() {
 		}
 		name := rest[:eq]
 		val_str := rest[eq + 1:]
+
+		// String-valued flags routed before the numeric switch.
+		if name == "rpg-class" {
+			if !rpg_set_class_by_name(val_str) {
+				fmt.eprintf("unknown class for --rpg-class: %s (drifter|cowboy|spider|wizard|operator|icebreaker)\n", val_str)
+			}
+			continue
+		}
 
 		fval, f_ok := strconv.parse_f64(val_str)
 		ival, i_ok := strconv.parse_int(val_str)
