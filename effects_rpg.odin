@@ -97,6 +97,9 @@ RPG_State :: struct {
 	class_toast_t:     f32,
 	class_toast_text:  [48]u8,
 	class_toast_len:   int,
+	// Spells (Phase 1 hardcoded unlocks)
+	teleport_flash_t:  f32,  // Lv 5 — short whiteout on cd
+	biome_shifted:     bool, // Lv 10 — one-shot palette change
 }
 
 rpg: RPG_State
@@ -163,6 +166,10 @@ on_rpg_command :: proc(line: string) {
 		try_reclassify()
 	}
 
+	// Spells gated by level.
+	if rpg.level >= 2 do cast_spark()
+	if rpg.level >= 5 && cmd == "cd" do cast_teleport()
+
 	check_level_up()
 }
 
@@ -171,6 +178,9 @@ check_level_up :: proc() {
 	for rpg.xp >= cumulative_xp(rpg.level + 1) {
 		rpg.level += 1
 		trigger_level_up()
+		if rpg.level == 10 && !rpg.biome_shifted {
+			cast_biome_shift()
+		}
 	}
 }
 
@@ -188,6 +198,49 @@ trigger_level_up :: proc() {
 	for _ in 0 ..< 8 {
 		emit_rising(.LASER, cx, cy)
 	}
+}
+
+// ---------------------------------------------------------------------------
+// Spells (Phase 1 hardcoded unlocks; Phase 2 will source these from the
+// skill tree per uzo-ad8)
+// ---------------------------------------------------------------------------
+
+// Lv 2 — small ember burst from cursor on every command.
+@(private = "file")
+cast_spark :: proc() {
+	cx := f32(cursor_x_g) * f32(cell_w) + PADDING + f32(cell_w) * 0.5
+	cy := f32(cursor_y_g) * f32(cell_h) + PADDING + f32(cell_h) * 0.5
+	for _ in 0 ..< 5 do emit_rising(.EMBER, cx, cy)
+}
+
+// Lv 5 — cd command triggers a short whiteout flash + radial laser burst,
+// reading as a 'teleport' through the directory hop.
+@(private = "file")
+cast_teleport :: proc() {
+	rpg.teleport_flash_t = 0.30
+	cx := f32(cursor_x_g) * f32(cell_w) + PADDING + f32(cell_w) * 0.5
+	cy := f32(cursor_y_g) * f32(cell_h) + PADDING + f32(cell_h) * 0.5
+	for _ in 0 ..< 24 do emit_rising(.LASER, cx, cy)
+}
+
+// Lv 10 — first-time palette shift to a class-themed scene background.
+@(private = "file")
+cast_biome_shift :: proc() {
+	cfg.scene_bg = biome_for_class(rpg.class)
+	rpg.biome_shifted = true
+}
+
+@(private = "file")
+biome_for_class :: proc(c: RPG_Class) -> rl.Color {
+	switch c {
+	case .DRIFTER:        return {18, 14, 6, 255}    // amber
+	case .CONSOLE_COWBOY: return {2, 18, 8, 255}     // matrix-green
+	case .SPIDER:         return {12, 4, 18, 255}    // web-violet
+	case .TECHNO_WIZARD:  return {18, 4, 14, 255}    // neon-pink
+	case .OPERATOR:       return {6, 12, 16, 255}    // steel-blue
+	case .ICE_BREAKER:    return {18, 6, 4, 255}     // rust-red
+	}
+	return {0, 0, 0, 255}
 }
 
 // ---------------------------------------------------------------------------
@@ -234,6 +287,7 @@ update_rpg :: proc(dt: f32) {
 	if !rpg_active do return
 	if rpg.level_up_flash_t > 0 do rpg.level_up_flash_t -= dt
 	if rpg.class_toast_t > 0 do rpg.class_toast_t -= dt
+	if rpg.teleport_flash_t > 0 do rpg.teleport_flash_t -= dt
 }
 
 @(private = "file")
@@ -250,6 +304,16 @@ draw_xp_bar :: proc(x, y, w, h: f32, progress: f32) {
 
 draw_rpg_hud :: proc() {
 	if !rpg_active do return
+
+	// Teleport whiteout — sin-curve flash over 0.30s, drawn under the HUD
+	// so the HUD pill stays readable even mid-flash.
+	if rpg.teleport_flash_t > 0 {
+		t := rpg.teleport_flash_t / 0.30
+		// Symmetric pulse: 0 → 1 over first half, 1 → 0 over second half.
+		pulse := 1.0 - (2.0 * t - 1.0) * (2.0 * t - 1.0)
+		alpha := u8(clamp(pulse, 0, 1) * 180)
+		rl.DrawRectangle(0, 0, window_w, window_h, {255, 255, 255, alpha})
+	}
 
 	// HUD pill — bottom-right, 12px margin from each edge.
 	margin: f32 = 12
