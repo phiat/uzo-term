@@ -150,8 +150,11 @@ glitch_timers: [TERM_ROWS][TERM_COLS]f32
 glitch_chars:  [TERM_ROWS][TERM_COLS]rune
 
 // Called when new PTY output arrives — scatters glitch timers with fixed chars.
+// Scatter count drops with cell_effect_scale so drum-wrapped output isn't
+// constantly substituted with random glyphs.
 trigger_glitch :: proc() {
-	for _ in 0 ..< cfg.glitch_scatter {
+	scatter := int(f32(cfg.glitch_scatter) * cell_effect_scale())
+	for _ in 0 ..< scatter {
 		r := rand.int_max(TERM_ROWS)
 		c := rand.int_max(TERM_COLS)
 		glitch_timers[r][c] = 0.04 + rand.float32() * (cfg.glitch_duration_max - 0.04)

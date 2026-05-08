@@ -200,6 +200,14 @@ flat_visible_alpha :: proc() -> f32 {
 	return 1.0 - drum_visible_alpha()
 }
 
+// Multiplier for "loud" cell-level effects (gravity pull, idle drift,
+// shockwave, emerge tween, ls race-in, glitch scatter). Drops from 1.0
+// when flat to 0.25 when the drum is fully up — keeps the wrapped TUI
+// legible on the cylinder surface without disabling the effects entirely.
+cell_effect_scale :: proc() -> f32 {
+	return 1.0 - drum_t * 0.75
+}
+
 draw_drum_3d :: proc(term_tex: rl.Texture2D) {
 	if !drum_active || !drum_loaded do return
 

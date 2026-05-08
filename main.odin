@@ -597,12 +597,20 @@ draw_3d_scene :: proc(t: f32) {
 draw_cell :: proc(col: u16, row: u16, row_cells_h: gvt.Render_State_Row_Cells, colors: ^gvt.Render_State_Colors) {
 	base_x := f32(col) * f32(cell_w) + PADDING
 	base_y := f32(row) * f32(cell_h) + PADDING
-	// Gravity well + idle drift + ls race-in all offset text; background stays on grid
+	// Gravity well + idle drift + ls race-in all offset text; background stays on grid.
+	// Cell-level "loud" effects scale down to 25% strength while the drum is up so
+	// the wrapped TUI stays legible on the cylinder surface.
+	scale := cell_effect_scale()
 	gx, gy := gravity_offset(col, row)
 	ix, iy := idle_drift_offset(col, row)
 	ls_dx, ls_scale := ls_cell_offset(col, row)
 	sw_dx := shockwave_offset(row)
 	em_dy, em_scale, em_alpha := emerge_offset(row)
+	gx *= scale; gy *= scale
+	ix *= scale; iy *= scale
+	ls_dx *= scale
+	sw_dx *= scale
+	em_dy *= scale
 	px := base_x + gx + ix + ls_dx + sw_dx
 	py := base_y + gy + iy + em_dy
 
