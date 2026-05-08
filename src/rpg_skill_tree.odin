@@ -22,7 +22,6 @@ package uzo_term
 //   R       — refund focused node (cascades dependents)
 //   Esc     — close
 
-import "core:fmt"
 import "core:math"
 import rl "vendor:raylib"
 
@@ -289,11 +288,9 @@ draw_skill_tree :: proc() {
 
 	// Top header bar
 	header_buf: [96]u8
-	header_str := fmt.bprintf(header_buf[:len(header_buf) - 1],
+	header_cs, _ := fmt_cstr(header_buf[:],
 		" %s   Lv %d   %d unspent ",
 		class_name(c), rpg.level, rpg.skill_points)
-	header_buf[len(header_str)] = 0
-	header_cs := cstring(&header_buf[0])
 	header_sz: f32 = 22
 	header_w := rl.MeasureTextEx(font, header_cs, header_sz, 1).x
 	header_x := (f32(window_w) - header_w) * 0.5
@@ -319,9 +316,9 @@ draw_skill_tree :: proc() {
 	margin: f32 = 80
 	avail_w := f32(window_w) - 2 * margin
 	avail_h := f32(window_h) - 2 * margin - 80 // header + footer space
-	tw := maxx - minx
-	th := maxy - miny
-	scale := min(avail_w / tw, avail_h / th)
+	tree_w := maxx - minx
+	tree_h := maxy - miny
+	scale := min(avail_w / tree_w, avail_h / tree_h)
 	if scale > 80 do scale = 80
 	cx := f32(window_w) * 0.5
 	cy := f32(window_h) * 0.5 + 10
@@ -395,16 +392,13 @@ draw_skill_tree :: proc() {
 		}
 		if len(n.name) > 0 {
 			tip_buf: [128]u8
-			tip_str := fmt.bprintf(tip_buf[:len(tip_buf) - 1],
-				" %s — %s ", n.name, n.desc)
-			tip_buf[len(tip_str)] = 0
-			tip_cs := cstring(&tip_buf[0])
+			tip_cs, _ := fmt_cstr(tip_buf[:], " %s — %s ", n.name, n.desc)
 			tip_sz: f32 = 18
-			tw := rl.MeasureTextEx(font, tip_cs, tip_sz, 1).x
-			tx := (f32(window_w) - tw) * 0.5
+			tip_w := rl.MeasureTextEx(font, tip_cs, tip_sz, 1).x
+			tx := (f32(window_w) - tip_w) * 0.5
 			ty := f32(window_h) - 70
-			rl.DrawRectangleRec({tx - 12, ty - 6, tw + 24, tip_sz + 12}, {0, 0, 0, 200})
-			rl.DrawRectangleLinesEx({tx - 12, ty - 6, tw + 24, tip_sz + 12}, 1,
+			rl.DrawRectangleRec({tx - 12, ty - 6, tip_w + 24, tip_sz + 12}, {0, 0, 0, 200})
+			rl.DrawRectangleLinesEx({tx - 12, ty - 6, tip_w + 24, tip_sz + 12}, 1,
 				{accent.r, accent.g, accent.b, 180})
 			rl.DrawTextEx(font, tip_cs, {tx, ty}, tip_sz, 1,
 				{cfg.fg_color.r, cfg.fg_color.g, cfg.fg_color.b, 230})
