@@ -117,7 +117,7 @@ init_config :: proc() {
 		drum_tumble_duration = 0.45,
 		drum_base_spin       = 0.18,
 		drum_density_gain    = 0.045,
-		drum_radius           = 2.7,
+		drum_radius           = 3.0,
 		drum_length           = 8.1,
 		drum_drag_sensitivity = 0.012,
 		whoosh_speed_min     = 220.0,
@@ -200,7 +200,7 @@ randomize_config :: proc() {
 	cfg.drum_tumble_duration = rf(0.20, 1.10)
 	cfg.drum_base_spin       = rf(0.04, 0.70)
 	cfg.drum_density_gain    = rf(0.005, 0.12)
-	cfg.drum_radius           = rf(1.8, 3.2)
+	cfg.drum_radius           = rf(2.0, 3.5)
 	cfg.drum_length           = rf(5.0, 11.0)
 	// drum_drag_sensitivity stays at default — randomization unhelpful here
 	cfg.whoosh_speed_min     = rf(120.0, 280.0)

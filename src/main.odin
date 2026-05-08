@@ -217,6 +217,10 @@ main :: proc() {
 			}
 		} else {
 			pump_pty()
+			// Shell exited via something other than typing `exit` (Ctrl+D,
+			// kill, `logout`, crash). Close cleanly — no doom drip; that's
+			// reserved for the explicit-exit flow.
+			if session_ended do break
 			handle_input()
 			handle_hyperlink_click()
 			handle_drum_drag()
@@ -237,13 +241,7 @@ pump_pty :: proc() {
 		trigger_glitch()
 		on_pty_bytes()
 	}
-	if eof {
-		session_ended = true
-		// Shell ended without us catching the `exit` line locally (Ctrl+D,
-		// `logout`, kill, …). Play the doom drip anyway so the window
-		// closes through the normal exit flow instead of freezing.
-		if !exit_active do trigger_exit()
-	}
+	if eof do session_ended = true
 }
 
 // ---------------------------------------------------------------------------
