@@ -230,8 +230,7 @@ update_rpg :: proc(dt: f32) {
 	if !rpg_active do return
 	if rpg.level_up_flash_t > 0 do rpg.level_up_flash_t -= dt
 	if rpg.class_toast_t > 0 do rpg.class_toast_t -= dt
-	teleport_tick(dt)
-	map_pulse_tick(dt)
+	tick_spells(dt)
 }
 
 @(private = "file")
@@ -251,8 +250,7 @@ draw_rpg_hud :: proc() {
 
 	// Spell-owned full-screen overlays render first so the HUD pill stays on top.
 	// (Biome underlay is drawn earlier, in draw_pass1b, so it sits behind cells.)
-	draw_teleport_flash()
-	draw_map_pulse()
+	draw_spells()
 
 	margin_x: f32 = 12
 	margin_y: f32 = 42 // 12 base + 30 lift

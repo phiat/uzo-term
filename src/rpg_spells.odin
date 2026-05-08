@@ -37,6 +37,11 @@ Spell :: struct {
 	trigger:        Spell_Trigger,
 	match:          Spell_Match,
 	fire:           proc(),
+	// Optional per-frame hooks. Spells with animated overlays (Teleport
+	// flash, Map Pulse ring) set these and avoid central edits in
+	// update_rpg / draw_rpg_hud.
+	tick: proc(dt: f32),
+	draw: proc(),
 	// ON_LEVEL_UP spells should set this true (otherwise they re-fire on every
 	// keypress past the threshold). ON_COMMAND spells can opt in for once-only
 	// behavior. dispatch_levelup_spells force-marks ON_LEVEL_UP fires done as
@@ -120,5 +125,19 @@ dispatch_levelup_spells :: proc() {
 		if s.cast_done do continue
 		s.fire()
 		s.cast_done = true
+	}
+}
+
+// Per-frame fan-out. Called from update_rpg / draw_rpg_hud so individual
+// spell files can opt into animated state without central edits.
+tick_spells :: proc(dt: f32) {
+	for i in 0 ..< spells_count {
+		if t := spells_registry[i].tick; t != nil do t(dt)
+	}
+}
+
+draw_spells :: proc() {
+	for i in 0 ..< spells_count {
+		if d := spells_registry[i].draw; d != nil do d()
 	}
 }
