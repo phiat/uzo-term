@@ -3,6 +3,8 @@ package uzo_term
 // Pure helpers shared across the codebase: string scanning, command
 // classification, and tiny math/hash utilities.
 
+import "core:fmt"
+
 // ---------------------------------------------------------------------------
 // Math
 // ---------------------------------------------------------------------------
@@ -10,6 +12,24 @@ package uzo_term
 ease_out_cubic :: proc(t: f32) -> f32 {
 	x := 1.0 - t
 	return 1.0 - x * x * x
+}
+
+// ---------------------------------------------------------------------------
+// Drawing helpers
+// ---------------------------------------------------------------------------
+
+// Format into a stack buffer and return a cstring valid for the buffer's
+// lifetime, plus the byte length (excluding null terminator). Reserves the
+// last byte for the terminator. Pattern:
+//
+//   buf: [64]u8
+//   cs, _ := fmt_cstr(buf[:], "Lv %d  %s", level, class_name)
+//   rl.DrawTextEx(font, cs, ...)
+fmt_cstr :: #force_inline proc(buf: []u8, format: string, args: ..any) -> (cstring, int) {
+	if len(buf) == 0 do return cstring(nil), 0
+	s := fmt.bprintf(buf[:len(buf) - 1], format, ..args)
+	buf[len(s)] = 0
+	return cstring(&buf[0]), len(s)
 }
 
 // ---------------------------------------------------------------------------
