@@ -205,7 +205,11 @@ update_idle :: proc() {
 idle_drift_offset :: proc(col, row: u16) -> (dx, dy: f32) {
 	if idle_strength <= 0 do return 0, 0
 	phase := f32(col) * 0.73 + f32(row) * 1.27
-	dx = math.sin(elapsed_g * 0.68 + phase) * cfg.idle_drift_max * idle_strength
-	dy = math.cos(elapsed_g * 0.51 + phase * 0.88) * cfg.idle_drift_max * idle_strength * 0.65
+	// Skill-tree stat-mod hook (uzo-fn1): allocated Drifter nodes scale
+	// drift amplitude up. mult = 1 + Σ(STAT_MOD payload_values for IDLE_DRIFT_PCT).
+	mult := 1.0 + sum_stat_mod(rpg.class, .IDLE_DRIFT_PCT)
+	amp := cfg.idle_drift_max * mult
+	dx = math.sin(elapsed_g * 0.68 + phase) * amp * idle_strength
+	dy = math.cos(elapsed_g * 0.51 + phase * 0.88) * amp * idle_strength * 0.65
 	return
 }
