@@ -70,6 +70,7 @@ cursor_visible_g: bool
 // Input line buffer for command detection (sudo, etc.)
 input_line:     [256]u8
 input_line_len: int
+alt_screen_prev: bool
 
 // Last rendered cursor row text (captures tab-completed content)
 cursor_row_buf: [256]u8
@@ -216,6 +217,10 @@ main :: proc() {
 			}
 		} else {
 			pump_pty()
+			// Shell exited via something other than typing `exit` (Ctrl+D,
+			// kill, `logout`, crash). Close cleanly — no doom drip; that's
+			// reserved for the explicit-exit flow.
+			if session_ended do break
 			handle_input()
 			handle_hyperlink_click()
 			handle_drum_drag()
@@ -234,6 +239,7 @@ pump_pty :: proc() {
 	if len(data) > 0 {
 		gvt.term_write_bytes(&gterm, data)
 		trigger_glitch()
+		on_pty_bytes()
 	}
 	if eof do session_ended = true
 }
@@ -249,6 +255,7 @@ handle_input :: proc() {
 		for { if rl.GetCharPressed() == 0 do break }
 	}
 
+	on_alt := gvt.term_active_screen(&gterm) == .ALTERNATE
 	for {
 		ch := rl.GetCharPressed()
 		if ch == 0 do break
@@ -263,8 +270,12 @@ handle_input :: proc() {
 			f32(cursor_x_g) * f32(cell_w) + PADDING,
 			f32(cursor_y_g) * f32(cell_h) + PADDING,
 		)
-		// Append printable ASCII to input line for command detection
-		if ch < 128 && input_line_len < len(input_line) - 1 {
+		// Append printable ASCII to input line for command detection. Skip
+		// while in alt-screen (vim/htop/less) — those keys aren't shell
+		// commands, and accumulating them poisons the buffer (e.g. "q" to
+		// quit htop turning the next "exit" into "qexit", which then
+		// silently fails to match `line == "exit"`).
+		if !on_alt && ch < 128 && input_line_len < len(input_line) - 1 {
 			input_line[input_line_len] = u8(ch)
 			input_line_len += 1
 		}
@@ -426,6 +437,27 @@ handle_command_line :: proc() {
 // Rendering
 // ---------------------------------------------------------------------------
 
+// Per-frame rendering is three distinct passes, each writing to a different
+// surface:
+//
+//   1. draw_term_pass    — flat terminal grid (cells, cursor, key drops,
+//                          trail, particles, hover highlight) → term_target.
+//                          Owns the cell-iteration loop and most cell-level
+//                          effect updates.
+//
+//   2. draw_world_pass   — composites the 3D scene (shardwall / drum / cubes),
+//                          the flat term_target as an overlay, and all UI
+//                          (HUD, modal, skill tree, search, drum button,
+//                          sudo vignette) → target.
+//
+//   3. present_pass      — runs the post-processing shader over target,
+//                          applies shake offset + rhythm tint + boot CRT
+//                          flash, and presents to the screen.
+//
+// Pre-pass simulation updates (idle drift, mouse field, RPG, drum tumble,
+// shockwave timer, …) run at the top of draw_frame so all three passes see
+// a consistent state.
+
 draw_frame :: proc() {
 	elapsed := f32(rl.GetTime())
 	elapsed_g = elapsed // shared with effects
@@ -433,6 +465,8 @@ draw_frame :: proc() {
 	dt := rl.GetFrameTime()
 	update_idle()
 	if cfg.mouse_field_enabled do update_mouse_field()
+	update_hyperlink_hover()
+	update_prompt_rise()
 	update_rpg(dt)
 	update_camera_fly()
 	update_pwd_tint(dt)
@@ -440,24 +474,41 @@ draw_frame :: proc() {
 	update_shockwave(dt)
 
 	// Drum (alt-screen) tumble + spin
-	drum_set_alt(gvt.term_active_screen(&gterm) == .ALTERNATE)
+	on_alt := gvt.term_active_screen(&gterm) == .ALTERNATE
+	if on_alt != alt_screen_prev {
+		// Discard the input-line buffer on either transition so command
+		// detection doesn't see characters typed inside vim/htop leaking
+		// into the next prompt (or vice-versa).
+		input_line_len = 0
+		alt_screen_prev = on_alt
+	}
+	drum_set_alt(on_alt)
 	update_drum(dt)
 
+	draw_term_pass(dt)
+	draw_world_pass(elapsed)
+	present_pass(elapsed)
+}
+
+// Pass 1: render the flat terminal grid (cells, cursor, hover highlight,
+// per-cell effect overlays) to term_target. The cylinder in pass 2 samples
+// term_target as its texture, so this pass also drives what shows on the
+// drum.
+//
+// On render-update failure the cell loop is skipped but the bg fill still
+// produces a valid (mostly-empty) term_target — the world+present passes
+// proceed normally with stale content.
+draw_term_pass :: proc(dt: f32) {
 	fly := cam_fly_intensity()
 	term_bg_alpha := u8(f32(cfg.term_bg.a) * (1.0 - fly * 0.92))
 	bg_tinted := pwd_tint(cfg.term_bg, cfg.pwd_tint_bg)
 
-	// ── Pass 1a: render terminal cells to term_target (texture source for drum) ──
 	rl.BeginTextureMode(term_target)
+	defer rl.EndTextureMode()
 	rl.ClearBackground(rl.BLANK)
 	rl.DrawRectangle(0, 0, window_w, window_h, {bg_tinted.r, bg_tinted.g, bg_tinted.b, term_bg_alpha})
 
-	if gvt.term_render_update(&gterm) != .None {
-		rl.EndTextureMode()
-		draw_pass1b(elapsed)
-		draw_pass2(elapsed)
-		return
-	}
+	if gvt.term_render_update(&gterm) != .None do return
 
 	colors, _ := gvt.term_render_colors(&gterm)
 	cursor := gvt.term_render_cursor(&gterm)
@@ -471,13 +522,17 @@ draw_frame :: proc() {
 	row_it := gvt.term_render_rows(&gterm)
 	for row in gvt.render_row_next(&row_it) {
 		dirty_row: bool
-		if gvt.render_state_row_get(row_iter_h, .DIRTY, &dirty_row) == .SUCCESS && dirty_row {
+		_ = gvt.render_state_row_get(row_iter_h, .DIRTY, &dirty_row)
+		if dirty_row {
 			mark_row_born(row)
 			mark_ls_row(row)
 			drum_dirty_rows += 1
+			if cfg.error_quake_enabled do quake_scan_reset(row)
+			on_row_dirty_prompt_rise(row)
 		}
 		col_idx: u16 = 0
 		for gvt.render_state_row_cells_next(row_cells_h) {
+			if dirty_row && cfg.error_quake_enabled do quake_scan_cell(row, col_idx, row_cells_h)
 			if row == cursor.y && cursor_row_len < len(cursor_row_buf) - 1 {
 				raw: gvt.Cell
 				if gvt.render_state_row_cells_get(row_cells_h, .RAW, &raw) == .SUCCESS {
@@ -497,6 +552,7 @@ draw_frame :: proc() {
 			draw_cell(col_idx, row, row_cells_h, &colors)
 			col_idx += 1
 		}
+		if dirty_row && cfg.error_quake_enabled do quake_check_row(row)
 	}
 	whoosh_consume()
 	search_scan_rows()
@@ -508,6 +564,7 @@ draw_frame :: proc() {
 		rl.DrawRectangle(i32(cx), i32(cy), cell_w, cell_h, cfg.cursor_color)
 	}
 
+	draw_hyperlink_hover()
 	update_glitch()
 	update_ls_anim()
 	draw_key_drops()
@@ -516,18 +573,11 @@ draw_frame :: proc() {
 	update_draw_rising()
 
 	gvt.term_render_clean(&gterm)
-	rl.EndTextureMode()
-
-	// ── Pass 1b: 3D scene + drum + flat term overlay → target ──
-	draw_pass1b(elapsed)
-
-	draw_pass2(elapsed)
 }
 
-// Composites the 3D scene, the drum (alt-screen), and the flat terminal
-// overlay onto `target`. Split out so the early-return path on render-update
-// failure can still produce a valid frame.
-draw_pass1b :: proc(elapsed: f32) {
+// Pass 2: composite the 3D scene, the drum (alt-screen), the flat terminal
+// overlay, and all UI overlays onto target.
+draw_world_pass :: proc(elapsed: f32) {
 	rl.BeginTextureMode(target)
 	rl.ClearBackground(cfg.scene_bg)
 
@@ -563,7 +613,10 @@ draw_pass1b :: proc(elapsed: f32) {
 	rl.EndTextureMode()
 }
 
-draw_pass2 :: proc(elapsed_in: f32) {
+// Pass 3: post-processing shader + frame present. Reads from target, runs
+// the shimmer/CRT shader, applies shake offset + rhythm tint + boot flash,
+// and ends drawing.
+present_pass :: proc(elapsed_in: f32) {
 	elapsed := elapsed_in
 	rl.SetShaderValue(shader, time_loc, &elapsed, .FLOAT)
 
@@ -643,12 +696,18 @@ draw_cell :: proc(col: u16, row: u16, row_cells_h: gvt.Render_State_Row_Cells, c
 	ix, iy := idle_drift_offset(col, row)
 	mfx, mfy: f32
 	if cfg.mouse_field_enabled do mfx, mfy = mouse_field_offset(col, row)
+	eq_dx: f32
+	if cfg.error_quake_enabled do eq_dx = error_quake_offset(row)
+	pr_dy: f32
+	if cfg.prompt_rise_enabled do pr_dy = prompt_rise_offset(row)
 	ls_dx, ls_scale := ls_cell_offset(col, row)
 	sw_dx := shockwave_offset(row)
 	em_dy, em_scale, em_alpha := emerge_offset(row)
 	gx *= scale; gy *= scale
 	ix *= scale; iy *= scale
 	mfx *= scale; mfy *= scale
+	eq_dx *= scale
+	pr_dy *= scale
 	ls_dx *= scale
 	sw_dx *= scale
 	em_dy *= scale
@@ -656,8 +715,8 @@ draw_cell :: proc(col: u16, row: u16, row_cells_h: gvt.Render_State_Row_Cells, c
 	// emerge/ls scaling matches the muted positional offsets.
 	ls_scale = 1.0 + (ls_scale - 1.0) * scale
 	em_scale = 1.0 + (em_scale - 1.0) * scale
-	px := base_x + gx + ix + mfx + ls_dx + sw_dx
-	py := base_y + gy + iy + mfy + em_dy
+	px := base_x + gx + ix + mfx + eq_dx + ls_dx + sw_dx
+	py := base_y + gy + iy + mfy + pr_dy + em_dy
 
 	bg_rgb: gvt.Color_Rgb
 	if gvt.render_state_row_cells_get(row_cells_h, .BG_COLOR, &bg_rgb) == .SUCCESS {

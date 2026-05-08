@@ -273,7 +273,7 @@ draw_rpg_hud :: proc() {
 	if !rpg_active do return
 
 	// Spell-owned full-screen overlays render first so the HUD pill stays on top.
-	// (Biome underlay is drawn earlier, in draw_pass1b, so it sits behind cells.)
+	// (Biome underlay is drawn earlier, in draw_world_pass, so it sits behind cells.)
 	draw_spells()
 	draw_drop_toast()
 
