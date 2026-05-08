@@ -20,7 +20,7 @@ build-lib:
 
 # Build uzo-term
 build: build-lib
-    odin build . -out:{{bin}} {{odin_flags}}
+    odin build src -out:{{bin}} {{odin_flags}}
 
 # Build + run (pass extra args: just run --rand)
 run *ARGS: build
@@ -31,12 +31,12 @@ dev: run
 
 # Debug build + run
 debug: build-lib
-    odin build . -out:{{bin}} -debug {{odin_flags}}
+    odin build src -out:{{bin}} -debug {{odin_flags}}
     ./{{bin}}
 
 # Type-check only
 check:
-    odin check . -no-entry-point {{collection}}
+    odin check src -no-entry-point {{collection}}
 
 # Clean
 clean:

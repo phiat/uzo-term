@@ -85,6 +85,7 @@ camera: rl.Camera3D
 main :: proc() {
 	// -- Effect config (before anything else so --rand seeds early) --
 	init_config()
+	init_rpg()
 	parse_config_args()
 
 	// -- Init ghostty-vt terminal (wrapper handles render-state alloc + teardown atomically) --
@@ -249,6 +250,7 @@ handle_input :: proc() {
 		n := r.encode_utf8(buf[:], ch)
 		p.write_bytes(&pty, buf[:n])
 		on_keypress_rhythm()
+		on_rpg_keypress(ch)
 		reset_idle()
 		trigger_key_drop(ch)
 		push_trail_point(
@@ -286,6 +288,12 @@ handle_input :: proc() {
 		}
 
 		shift := rl.IsKeyDown(.LEFT_SHIFT) || rl.IsKeyDown(.RIGHT_SHIFT)
+
+		// F9 toggles the RPG layer at runtime (state is preserved).
+		if key == .F9 {
+			rpg_active = !rpg_active
+			continue
+		}
 
 		// Ctrl+Shift+V: paste from system clipboard via libghostty-vt's encoder
 		// (handles bracketed-paste wrapping + unsafe byte stripping).
@@ -340,6 +348,7 @@ handle_command_line :: proc() {
 	if input_line_len == 0 {
 		line = strip_prompt(string(cursor_row_buf[:cursor_row_len]))
 	}
+	on_rpg_command(line)
 	if contains(line, "sudo") {
 		on_sudo_detected()
 	} else if len(line) > 0 {
@@ -396,6 +405,7 @@ draw_frame :: proc() {
 
 	dt := rl.GetFrameTime()
 	update_idle()
+	update_rpg(dt)
 	update_camera_fly()
 	update_pwd_tint(dt)
 	update_forge(dt)
@@ -500,6 +510,11 @@ draw_pass1b :: proc(elapsed: f32) {
 
 	draw_cd_labels()
 
+	// Biome underlay (post-Lv-10 class-themed border) — sits between the 3D
+	// scene and the cell layer so cells composite over it. Visible most
+	// strongly during cd-fly + drum mode where the cell layer thins out.
+	if rpg_active do draw_biome_overlay()
+
 	// Flat terminal overlay — fades out as the drum tumbles in
 	flat_a := u8(255.0 * flat_visible_alpha())
 	if flat_a > 0 {
@@ -513,6 +528,7 @@ draw_pass1b :: proc(elapsed: f32) {
 
 	draw_search_overlay()
 	draw_drum_button()
+	draw_rpg_hud()
 	draw_sudo_vignette()
 	rl.EndTextureMode()
 }
@@ -552,13 +568,20 @@ draw_pass2 :: proc(elapsed_in: f32) {
 // ---------------------------------------------------------------------------
 
 draw_3d_scene :: proc(t: f32) {
-	if shardwall_active {
+	fly := cam_fly_intensity()
+	// Fall back to wireframes when:
+	//   - drum is up: shardwall cubes occlude the cylinder via the depth buffer
+	//   - cd-fly is active: term_target's bg alpha drops to ~8% so the 3D
+	//     scene shows through — and since the shardwall samples term_target
+	//     as its cube texture, the cubes fade along with the backdrop and
+	//     leave only floating cell glyphs. The wireframe loop below is
+	//     brightness-pumped by fly intensity, so the cubes punch out instead.
+	if shardwall_active && drum_t < 0.05 && fly < 0.05 {
 		draw_shardwall(t)
 		return
 	}
 
 	// Fallback: slow-spinning grid of dim wireframe cubes (legacy look).
-	fly := cam_fly_intensity()
 	for ix in -3 ..= 3 {
 		for iz in -3 ..= 3 {
 			x := f32(ix) * 2.5
@@ -582,12 +605,24 @@ draw_3d_scene :: proc(t: f32) {
 draw_cell :: proc(col: u16, row: u16, row_cells_h: gvt.Render_State_Row_Cells, colors: ^gvt.Render_State_Colors) {
 	base_x := f32(col) * f32(cell_w) + PADDING
 	base_y := f32(row) * f32(cell_h) + PADDING
-	// Gravity well + idle drift + ls race-in all offset text; background stays on grid
+	// Gravity well + idle drift + ls race-in all offset text; background stays on grid.
+	// Cell-level "loud" effects scale down to 25% strength while the drum is up so
+	// the wrapped TUI stays legible on the cylinder surface.
+	scale := cell_effect_scale()
 	gx, gy := gravity_offset(col, row)
 	ix, iy := idle_drift_offset(col, row)
 	ls_dx, ls_scale := ls_cell_offset(col, row)
 	sw_dx := shockwave_offset(row)
 	em_dy, em_scale, em_alpha := emerge_offset(row)
+	gx *= scale; gy *= scale
+	ix *= scale; iy *= scale
+	ls_dx *= scale
+	sw_dx *= scale
+	em_dy *= scale
+	// Size multipliers — attenuate the deviation from 1.0 so the on-drum
+	// emerge/ls scaling matches the muted positional offsets.
+	ls_scale = 1.0 + (ls_scale - 1.0) * scale
+	em_scale = 1.0 + (em_scale - 1.0) * scale
 	px := base_x + gx + ix + ls_dx + sw_dx
 	py := base_y + gy + iy + em_dy
 
