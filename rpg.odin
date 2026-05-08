@@ -1,10 +1,20 @@
 package uzo_term
 
-// RPG layer — XP from typing & commands, levels, class auto-detection,
-// bottom-right HUD, level-up particle burst, periodic class re-roll.
-// Phase 1: session-scoped (no persistence). Phase 2 will add the
-// per-class skill trees (uzo-ad8). Module is single-file and
-// self-contained; the only public hooks live in this file.
+// RPG subsystem — core state, XP/level math, frame integration, public hooks.
+//
+// File layout (all in package uzo_term):
+//   rpg.odin                 — this file: state, XP/level, frame integration
+//   rpg_classes.odin         — class enum + table (name, biome, verbs)
+//   rpg_spells.odin          — Spell struct, registry, dispatcher
+//   rpg_spell_<name>.odin    — one file per spell, self-registers via @(init)
+//
+// Adding a spell:    create rpg_spell_<name>.odin (no central edits)
+// Adding a class:    append to RPG_Class enum + class_table at same index
+// Adding a stat:     edit RPG_State struct
+//
+// Phase 2 (uzo-ad8) will add rpg_skill_tree.odin + rpg_tree_<class>.odin,
+// at which point Spell.level_required can be supplemented with a node_id
+// gate without breaking existing spells.
 
 import "core:fmt"
 import rl "vendor:raylib"
@@ -13,62 +23,26 @@ import rl "vendor:raylib"
 // Public toggle + tunables
 // ---------------------------------------------------------------------------
 
-rpg_active: bool = true // default-on; --no-rpg flag flips off, F9 toggles
+rpg_active: bool = true // default-on; --no-rpg flips, F9 toggles
 
-// XP economy. Tuned to hit Lv 10 in ~5 min and Lv 100 in ~90 min at
-// average human typing speed. Curve: xp_to_next(n) = LEVEL_BASE + LEVEL_SLOPE*n.
-@(private = "file") XP_PER_CHAR        :: 1
-@(private = "file") XP_PER_ENTER       :: 10
-@(private = "file") LEVEL_BASE         :: 100
-@(private = "file") LEVEL_SLOPE        :: 5
-@(private = "file") CLASS_RECHECK_EVERY :: 10  // re-evaluate every N commands once enough data
-@(private = "file") CLASS_THRESHOLD    :: f32(0.40) // dominant verb must be ≥40% of last 50
+@(private = "file") XP_PER_CHAR         :: 1
+@(private = "file") XP_PER_ENTER        :: 10
+@(private = "file") LEVEL_BASE          :: 100
+@(private = "file") LEVEL_SLOPE         :: 5
+@(private = "file") CLASS_RECHECK_EVERY :: 10
+@(private = "file") CLASS_THRESHOLD     :: f32(0.40)
 
 // ---------------------------------------------------------------------------
-// Classes (Neuromancer / Rifts flavor)
+// Classes (table lives in rpg_classes.odin)
 // ---------------------------------------------------------------------------
 
 RPG_Class :: enum u8 {
-	DRIFTER,         // cd / ls / pwd / pushd
-	CONSOLE_COWBOY,  // git*
-	SPIDER,          // grep / rg / find / ack / awk
-	TECHNO_WIZARD,   // vim / nvim / nano / emacs
-	OPERATOR,        // make / cargo / go / npm
-	ICE_BREAKER,     // rm / sudo / kill / chmod
-}
-
-class_name :: proc(c: RPG_Class) -> string {
-	switch c {
-	case .DRIFTER:        return "Drifter"
-	case .CONSOLE_COWBOY: return "Console Cowboy"
-	case .SPIDER:         return "Spider"
-	case .TECHNO_WIZARD:  return "Techno-Wizard"
-	case .OPERATOR:       return "Operator"
-	case .ICE_BREAKER:    return "Ice-Breaker"
-	}
-	return "Drifter"
-}
-
-// Map the first verb of a command line to its class. Returns DRIFTER as a
-// fallback so the bias towards 'navigation' makes pure cd/ls sessions
-// classify cleanly.
-@(private = "file")
-classify_verb :: proc(verb: string) -> RPG_Class {
-	if len(verb) >= 3 && verb[:3] == "git" do return .CONSOLE_COWBOY
-	switch verb {
-	case "grep", "rg", "ag", "find", "ack", "fgrep", "egrep", "awk":
-		return .SPIDER
-	case "vim", "nvim", "nano", "emacs", "vi", "ed":
-		return .TECHNO_WIZARD
-	case "make", "cargo", "go", "npm", "yarn", "pnpm",
-	     "just", "ninja", "cmake", "zig", "odin", "tsc":
-		return .OPERATOR
-	case "rm", "sudo", "doas", "kill", "pkill", "killall", "chmod", "chown":
-		return .ICE_BREAKER
-	case "cd", "ls", "pwd", "pushd", "popd", "tree":
-		return .DRIFTER
-	}
-	return .DRIFTER
+	DRIFTER,
+	CONSOLE_COWBOY,
+	SPIDER,
+	TECHNO_WIZARD,
+	OPERATOR,
+	ICE_BREAKER,
 }
 
 // ---------------------------------------------------------------------------
@@ -87,7 +61,7 @@ RPG_State :: struct {
 	xp:                u64,
 	level:             u16,
 	class:             RPG_Class,
-	class_locked:      bool, // user pinned a class via --rpg-class
+	class_locked:      bool,
 	command_log:       [COMMAND_LOG_LEN]Command_Tally,
 	command_log_head:  int,
 	commands_seen:     u32,
@@ -97,9 +71,6 @@ RPG_State :: struct {
 	class_toast_t:     f32,
 	class_toast_text:  [48]u8,
 	class_toast_len:   int,
-	// Spells (Phase 1 hardcoded unlocks)
-	teleport_flash_t:  f32,  // Lv 5 — short whiteout on cd
-	biome_shifted:     bool, // Lv 10 — one-shot palette change
 }
 
 rpg: RPG_State
@@ -109,16 +80,20 @@ init_rpg :: proc() {
 	rpg.class = .DRIFTER
 }
 
+rpg_reset :: proc() {
+	rpg = {}
+	init_rpg()
+	reset_spell_state()
+}
+
 // ---------------------------------------------------------------------------
 // Level curve
 // ---------------------------------------------------------------------------
 
-// XP needed to advance from `level` to `level + 1`.
 xp_to_next :: proc(level: u16) -> u64 {
 	return u64(LEVEL_BASE + LEVEL_SLOPE * int(level))
 }
 
-// Total XP required to first reach `level` (level 1 = 0).
 cumulative_xp :: proc(level: u16) -> u64 {
 	if level <= 1 do return 0
 	sum: u64 = 0
@@ -128,7 +103,6 @@ cumulative_xp :: proc(level: u16) -> u64 {
 	return sum
 }
 
-// XP earned within the current level + XP needed to fill it.
 current_level_progress :: proc() -> (have, need: u64) {
 	need = xp_to_next(rpg.level)
 	have = rpg.xp - cumulative_xp(rpg.level)
@@ -136,12 +110,12 @@ current_level_progress :: proc() -> (have, need: u64) {
 }
 
 // ---------------------------------------------------------------------------
-// XP grant hooks (called from main.odin)
+// Public hooks (called from main.odin)
 // ---------------------------------------------------------------------------
 
 on_rpg_keypress :: proc(ch: rune) {
 	if !rpg_active do return
-	if ch < 32 || ch > 126 do return // printable ASCII only — avoids modifier double-counts
+	if ch < 32 || ch > 126 do return // printable ASCII only
 	rpg.xp += XP_PER_CHAR
 	check_level_up()
 }
@@ -166,10 +140,7 @@ on_rpg_command :: proc(line: string) {
 		try_reclassify()
 	}
 
-	// Spells gated by level.
-	if rpg.level >= 2 do cast_spark()
-	if rpg.level >= 5 && cmd == "cd" do cast_teleport()
-
+	dispatch_command_spells(line)
 	check_level_up()
 }
 
@@ -178,9 +149,7 @@ check_level_up :: proc() {
 	for rpg.xp >= cumulative_xp(rpg.level + 1) {
 		rpg.level += 1
 		trigger_level_up()
-		if rpg.level == 10 && !rpg.biome_shifted {
-			cast_biome_shift()
-		}
+		dispatch_levelup_spells()
 	}
 }
 
@@ -198,49 +167,6 @@ trigger_level_up :: proc() {
 	for _ in 0 ..< 8 {
 		emit_rising(.LASER, cx, cy)
 	}
-}
-
-// ---------------------------------------------------------------------------
-// Spells (Phase 1 hardcoded unlocks; Phase 2 will source these from the
-// skill tree per uzo-ad8)
-// ---------------------------------------------------------------------------
-
-// Lv 2 — small ember burst from cursor on every command.
-@(private = "file")
-cast_spark :: proc() {
-	cx := f32(cursor_x_g) * f32(cell_w) + PADDING + f32(cell_w) * 0.5
-	cy := f32(cursor_y_g) * f32(cell_h) + PADDING + f32(cell_h) * 0.5
-	for _ in 0 ..< 5 do emit_rising(.EMBER, cx, cy)
-}
-
-// Lv 5 — cd command triggers a short whiteout flash + radial laser burst,
-// reading as a 'teleport' through the directory hop.
-@(private = "file")
-cast_teleport :: proc() {
-	rpg.teleport_flash_t = 0.30
-	cx := f32(cursor_x_g) * f32(cell_w) + PADDING + f32(cell_w) * 0.5
-	cy := f32(cursor_y_g) * f32(cell_h) + PADDING + f32(cell_h) * 0.5
-	for _ in 0 ..< 24 do emit_rising(.LASER, cx, cy)
-}
-
-// Lv 10 — first-time palette shift to a class-themed scene background.
-@(private = "file")
-cast_biome_shift :: proc() {
-	cfg.scene_bg = biome_for_class(rpg.class)
-	rpg.biome_shifted = true
-}
-
-@(private = "file")
-biome_for_class :: proc(c: RPG_Class) -> rl.Color {
-	switch c {
-	case .DRIFTER:        return {18, 14, 6, 255}    // amber
-	case .CONSOLE_COWBOY: return {2, 18, 8, 255}     // matrix-green
-	case .SPIDER:         return {12, 4, 18, 255}    // web-violet
-	case .TECHNO_WIZARD:  return {18, 4, 14, 255}    // neon-pink
-	case .OPERATOR:       return {6, 12, 16, 255}    // steel-blue
-	case .ICE_BREAKER:    return {18, 6, 4, 255}     // rust-red
-	}
-	return {0, 0, 0, 255}
 }
 
 // ---------------------------------------------------------------------------
@@ -287,7 +213,7 @@ update_rpg :: proc(dt: f32) {
 	if !rpg_active do return
 	if rpg.level_up_flash_t > 0 do rpg.level_up_flash_t -= dt
 	if rpg.class_toast_t > 0 do rpg.class_toast_t -= dt
-	if rpg.teleport_flash_t > 0 do rpg.teleport_flash_t -= dt
+	teleport_tick(dt)
 }
 
 @(private = "file")
@@ -305,17 +231,9 @@ draw_xp_bar :: proc(x, y, w, h: f32, progress: f32) {
 draw_rpg_hud :: proc() {
 	if !rpg_active do return
 
-	// Teleport whiteout — sin-curve flash over 0.30s, drawn under the HUD
-	// so the HUD pill stays readable even mid-flash.
-	if rpg.teleport_flash_t > 0 {
-		t := rpg.teleport_flash_t / 0.30
-		// Symmetric pulse: 0 → 1 over first half, 1 → 0 over second half.
-		pulse := 1.0 - (2.0 * t - 1.0) * (2.0 * t - 1.0)
-		alpha := u8(clamp(pulse, 0, 1) * 180)
-		rl.DrawRectangle(0, 0, window_w, window_h, {255, 255, 255, alpha})
-	}
+	// Spell-owned full-screen overlays render first so the HUD pill stays on top.
+	draw_teleport_flash()
 
-	// HUD pill — bottom-right, 12px margin from each edge.
 	margin: f32 = 12
 	width:  f32 = 260
 	height: f32 = 22
@@ -328,14 +246,12 @@ draw_rpg_hud :: proc() {
 
 	have, need := current_level_progress()
 
-	// Left text: "Lv 7  Console Cowboy"
 	left_buf: [64]u8
 	left_str := fmt.bprintf(left_buf[:len(left_buf) - 1],
 		"Lv %d  %s", rpg.level, class_name(rpg.class))
 	left_buf[len(left_str)] = 0
 	left_cs := cstring(&left_buf[0])
 
-	// Right text: "320/450"
 	right_buf: [32]u8
 	right_str := fmt.bprintf(right_buf[:len(right_buf) - 1], "%d/%d", have, need)
 	right_buf[len(right_str)] = 0
@@ -348,14 +264,13 @@ draw_rpg_hud :: proc() {
 	right_w := rl.MeasureTextEx(font, right_cs, font_sz, 1).x
 	rl.DrawTextEx(font, right_cs, {x + width - right_w - 8, y + 4}, font_sz, 1, tcol)
 
-	// XP bar runs along the bottom 4px strip of the HUD pill.
 	progress := f32(have) / f32(need)
 	draw_xp_bar(x + 1, y + height - 4, width - 2, 3, progress)
 
 	// Level-up rising 'LEVEL N' text — 1.5s tween rising from cursor.
 	if rpg.level_up_flash_t > 0 && rpg.level_up_text_len > 0 {
-		t := rpg.level_up_flash_t / 1.5 // 1 → 0
-		eased := 1.0 - t * t            // 0 → 1
+		t := rpg.level_up_flash_t / 1.5
+		eased := 1.0 - t * t
 		rise := 60.0 * eased
 		alpha := u8(t * 255)
 
@@ -365,7 +280,6 @@ draw_rpg_hud :: proc() {
 		size: f32 = 28
 		cs := cstring(&rpg.level_up_text_buf[0])
 		tw := rl.MeasureTextEx(font, cs, size, 1).x
-		// Centered horizontally on cursor, clamped to window
 		px := cx - tw * 0.5
 		if px < 8 do px = 8
 		if px + tw > f32(window_w) - 8 do px = f32(window_w) - tw - 8
@@ -374,8 +288,8 @@ draw_rpg_hud :: proc() {
 
 	// Class toast — 3s, centered horizontally near top third.
 	if rpg.class_toast_t > 0 && rpg.class_toast_len > 0 {
-		t := rpg.class_toast_t / 3.0          // 1 → 0
-		alpha_f := t < 0.85 ? t / 0.85 : 1.0  // ease in fast, hold, fade
+		t := rpg.class_toast_t / 3.0
+		alpha_f := t < 0.85 ? t / 0.85 : 1.0
 		alpha := u8(clamp(alpha_f, 0, 1) * 240)
 
 		cs := cstring(&rpg.class_toast_text[0])
@@ -391,29 +305,4 @@ draw_rpg_hud :: proc() {
 		rl.DrawTextEx(font, cs, {tx, ty}, size, 1,
 			{cfg.accent_color.r, cfg.accent_color.g, cfg.accent_color.b, alpha})
 	}
-}
-
-// ---------------------------------------------------------------------------
-// CLI / runtime control
-// ---------------------------------------------------------------------------
-
-// Override class via --rpg-class=name. Returns false on unknown name so the
-// caller can warn.
-rpg_set_class_by_name :: proc(name: string) -> bool {
-	switch name {
-	case "drifter":     rpg.class = .DRIFTER
-	case "cowboy":      rpg.class = .CONSOLE_COWBOY
-	case "spider":      rpg.class = .SPIDER
-	case "wizard":      rpg.class = .TECHNO_WIZARD
-	case "operator":    rpg.class = .OPERATOR
-	case "icebreaker":  rpg.class = .ICE_BREAKER
-	case:               return false
-	}
-	rpg.class_locked = true
-	return true
-}
-
-rpg_reset :: proc() {
-	rpg = {}
-	init_rpg()
 }
