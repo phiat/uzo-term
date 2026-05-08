@@ -7,7 +7,7 @@ import gvt "ghosdin:vendor/ghostty_vt"
 // Detection is column-anchored (after optional leading whitespace) to avoid
 // firing on the word "error" appearing mid-prose.
 //
-// Scan integrates with the existing per-row cell iteration in draw_pass1a:
+// Scan integrates with the existing per-row cell iteration in draw_term_pass:
 //   - quake_scan_reset(row)  — call when a row is marked dirty
 //   - quake_scan_cell(row, col, byte) — call per cell (col < QUAKE_SCAN_LEN)
 //   - quake_check_row(row)   — call once after the row's cells have iterated
