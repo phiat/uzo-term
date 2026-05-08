@@ -563,7 +563,11 @@ draw_pass2 :: proc(elapsed_in: f32) {
 // ---------------------------------------------------------------------------
 
 draw_3d_scene :: proc(t: f32) {
-	if shardwall_active {
+	// While the drum is up, several shardwall cubes (ix=-1,0,1 × iz=2,3)
+	// fall inside or in front of the drum's bounding cylinder and would
+	// occlude it via the depth buffer. Fall back to wireframes — they
+	// don't write opaque depth and the drum reads cleanly.
+	if shardwall_active && drum_t < 0.05 {
 		draw_shardwall(t)
 		return
 	}

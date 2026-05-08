@@ -236,8 +236,8 @@ draw_rpg_hud :: proc() {
 
 	margin_x: f32 = 12
 	margin_y: f32 = 42 // 12 base + 30 lift
-	width:    f32 = 520
-	height:   f32 = 44
+	width:    f32 = 416
+	height:   f32 = 35
 	x := f32(window_w) - width - margin_x
 	y := f32(window_h) - height - margin_y
 
@@ -258,15 +258,15 @@ draw_rpg_hud :: proc() {
 	right_buf[len(right_str)] = 0
 	right_cs := cstring(&right_buf[0])
 
-	font_sz: f32 = 28
+	font_sz: f32 = 22
 	tcol := rl.Color{cfg.fg_color.r, cfg.fg_color.g, cfg.fg_color.b, 230}
-	rl.DrawTextEx(font, left_cs, {x + 16, y + 8}, font_sz, 2, tcol)
+	rl.DrawTextEx(font, left_cs, {x + 13, y + 6}, font_sz, 2, tcol)
 
 	right_w := rl.MeasureTextEx(font, right_cs, font_sz, 2).x
-	rl.DrawTextEx(font, right_cs, {x + width - right_w - 16, y + 8}, font_sz, 2, tcol)
+	rl.DrawTextEx(font, right_cs, {x + width - right_w - 13, y + 6}, font_sz, 2, tcol)
 
 	progress := f32(have) / f32(need)
-	draw_xp_bar(x + 2, y + height - 7, width - 4, 6, progress)
+	draw_xp_bar(x + 2, y + height - 6, width - 4, 5, progress)
 
 	// Level-up rising 'LEVEL N' text — 1.5s tween rising from cursor.
 	if rpg.level_up_flash_t > 0 && rpg.level_up_text_len > 0 {
