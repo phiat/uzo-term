@@ -9,6 +9,8 @@
 
 # Agent instructions (local-only)
 AGENTS.md
+CLAUDE.md
+.claude/
 
 # Build artifacts
 uzo-term_bin

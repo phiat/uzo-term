@@ -11,6 +11,8 @@ import "base:runtime"
 import "core:c"
 import "core:fmt"
 import "core:math"
+import "core:strings"
+import "core:sys/posix"
 import p "ghosdin:pty"
 import r "ghosdin:render_rl"
 import gvt "ghosdin:vendor/ghostty_vt"
@@ -55,6 +57,7 @@ font_path: cstring // remember which path worked for reloads
 
 // Render-texture + shader state
 target: rl.RenderTexture2D
+term_target: rl.RenderTexture2D // terminal-only RT (texture source for the drum)
 shader: rl.Shader
 time_loc: rl.ShaderLocationIndex
 resolution_loc: rl.ShaderLocationIndex
@@ -165,9 +168,15 @@ main :: proc() {
 	load_font()
 	defer rl.UnloadFont(font)
 
-	// -- Render texture (everything draws here first) --
+	// -- Render textures (terminal first, then composite) --
 	target = rl.LoadRenderTexture(window_w, window_h)
 	defer rl.UnloadRenderTexture(target)
+	term_target = rl.LoadRenderTexture(window_w, window_h)
+	defer rl.UnloadRenderTexture(term_target)
+
+	// -- Drum mesh (cylinder for alt-screen TUI) --
+	init_drum()
+	defer destroy_drum()
 
 	// -- Post-processing shader --
 	shader = rl.LoadShader(nil, "shaders/shimmer.fs")
@@ -207,6 +216,8 @@ main :: proc() {
 		} else {
 			pump_pty()
 			handle_input()
+			handle_hyperlink_click()
+			handle_drum_drag()
 			draw_frame()
 		}
 	}
@@ -274,11 +285,21 @@ handle_input :: proc() {
 			}
 		}
 
+		shift := rl.IsKeyDown(.LEFT_SHIFT) || rl.IsKeyDown(.RIGHT_SHIFT)
+
+		// Ctrl+Shift+V: paste from system clipboard via libghostty-vt's encoder
+		// (handles bracketed-paste wrapping + unsafe byte stripping).
+		if ctrl && shift && key == .V {
+			paste_clipboard()
+			continue
+		}
+
 		// Enter has uzo-term-specific side effects (effects + command detection)
 		// before the VT sequence is sent; keep that case inline.
 		if key == .ENTER {
 			trigger_shake()
 			trigger_explosion()
+			trigger_shockwave()
 			reset_idle()
 			handle_command_line()
 			input_line_len = 0
@@ -298,6 +319,11 @@ handle_input :: proc() {
 		if ctrl {
 			if b, ok := r.ctrl_byte(key); ok {
 				p.write_byte(&pty, b)
+				if key == .C {
+					trigger_smoke()
+				} else if key == .L {
+					trigger_whoosh()
+				}
 			}
 		}
 	}
@@ -308,12 +334,33 @@ handle_input :: proc() {
 // switch above stays focused on key→VT-sequence mapping.
 handle_command_line :: proc() {
 	line := string(input_line[:input_line_len])
+	// History recall (Up-arrow) doesn't populate input_line, so fall back to
+	// the cursor row with the shell prompt stripped. Catches re-runs that
+	// would otherwise miss every command-detection trigger.
+	if input_line_len == 0 {
+		line = strip_prompt(string(cursor_row_buf[:cursor_row_len]))
+	}
 	if contains(line, "sudo") {
 		on_sudo_detected()
 	} else if len(line) > 0 {
 		on_sudo_cleared()
 	}
-	if len(line) >= 2 && line[:2] == "cd" {
+	if is_build_command(line) {
+		trigger_forge()
+	}
+	if is_kill_command(line) {
+		trigger_smoke()
+	}
+	if line == "clear" || line == "reset" {
+		trigger_whoosh()
+	}
+	if is_search_command(line) {
+		needle, ok := extract_search_needle(line)
+		if ok && len(needle) > 0 {
+			trigger_search(needle)
+		}
+	}
+	if len(line) >= 2 && line[:2] == "cd" && (len(line) == 2 || line[2] == ' ') {
 		dir := "~"
 		row_text := string(cursor_row_buf[:cursor_row_len])
 		cd_pos := -1
@@ -347,43 +394,39 @@ draw_frame :: proc() {
 	elapsed := f32(rl.GetTime())
 	elapsed_g = elapsed // shared with effects
 
+	dt := rl.GetFrameTime()
 	update_idle()
 	update_camera_fly()
+	update_pwd_tint(dt)
+	update_forge(dt)
+	update_shockwave(dt)
 
-	// ── Pass 1: draw everything to render texture ──
-	rl.BeginTextureMode(target)
+	// Drum (alt-screen) tumble + spin
+	drum_set_alt(gvt.term_active_screen(&gterm) == .ALTERNATE)
+	update_drum(dt)
 
-	// 3D background
-	rl.ClearBackground(cfg.scene_bg)
-	rl.BeginMode3D(camera)
-	draw_3d_scene(elapsed)
-	rl.EndMode3D()
-
-	// Dir labels on cubes during cd fly (drawn in 2D using projected positions)
-	draw_cd_labels()
-
-	// 2D terminal overlay — fades out during cd fly so the 3D scene punches through
 	fly := cam_fly_intensity()
 	term_bg_alpha := u8(f32(cfg.term_bg.a) * (1.0 - fly * 0.92))
-	rl.DrawRectangle(0, 0, window_w, window_h, {cfg.term_bg.r, cfg.term_bg.g, cfg.term_bg.b, term_bg_alpha})
+	bg_tinted := pwd_tint(cfg.term_bg, cfg.pwd_tint_bg)
 
-	// Update render state — bail to just the background if it fails
+	// ── Pass 1a: render terminal cells to term_target (texture source for drum) ──
+	rl.BeginTextureMode(term_target)
+	rl.ClearBackground(rl.BLANK)
+	rl.DrawRectangle(0, 0, window_w, window_h, {bg_tinted.r, bg_tinted.g, bg_tinted.b, term_bg_alpha})
+
 	if gvt.term_render_update(&gterm) != .None {
 		rl.EndTextureMode()
+		draw_pass1b(elapsed)
 		draw_pass2(elapsed)
 		return
 	}
 
 	colors, _ := gvt.term_render_colors(&gterm)
 	cursor := gvt.term_render_cursor(&gterm)
-
-	// Expose cursor state to effects
 	cursor_x_g = cursor.x
 	cursor_y_g = cursor.y
 	cursor_visible_g = cursor.visible && cursor.in_viewport
 
-	// Terminal cells — iterate rows + cells via the wrapper, fetch per-row
-	// dirty flags directly from the underlying iterator handle.
 	cursor_row_len = 0
 	row_iter_h := gvt.term_row_iterator(&gterm)
 	row_cells_h := gvt.term_row_cells_handle(&gterm)
@@ -393,10 +436,10 @@ draw_frame :: proc() {
 		if gvt.render_state_row_get(row_iter_h, .DIRTY, &dirty_row) == .SUCCESS && dirty_row {
 			mark_row_born(row)
 			mark_ls_row(row)
+			drum_dirty_rows += 1
 		}
 		col_idx: u16 = 0
 		for gvt.render_state_row_cells_next(row_cells_h) {
-			// Capture cursor row text for command detection
 			if row == cursor.y && cursor_row_len < len(cursor_row_buf) - 1 {
 				raw: gvt.Cell
 				if gvt.render_state_row_cells_get(row_cells_h, .RAW, &raw) == .SUCCESS {
@@ -412,31 +455,66 @@ draw_frame :: proc() {
 					}
 				}
 			}
+			whoosh_emit_cell(col_idx, row, row_cells_h)
 			draw_cell(col_idx, row, row_cells_h, &colors)
 			col_idx += 1
 		}
 	}
+	whoosh_consume()
+	search_scan_rows()
+	update_search(dt)
 
-	// Cursor
 	if cursor_visible_g {
 		cx := f32(cursor.x) * f32(cell_w) + PADDING
 		cy := f32(cursor.y) * f32(cell_h) + PADDING
 		rl.DrawRectangle(i32(cx), i32(cy), cell_w, cell_h, cfg.cursor_color)
 	}
 
-	// Effects drawn on top of terminal cells
 	update_glitch()
 	update_ls_anim()
 	draw_key_drops()
 	draw_cursor_trail()
 	update_draw_particles()
-	draw_sudo_vignette()
+	update_draw_rising()
 
 	gvt.term_render_clean(&gterm)
-
 	rl.EndTextureMode()
 
+	// ── Pass 1b: 3D scene + drum + flat term overlay → target ──
+	draw_pass1b(elapsed)
+
 	draw_pass2(elapsed)
+}
+
+// Composites the 3D scene, the drum (alt-screen), and the flat terminal
+// overlay onto `target`. Split out so the early-return path on render-update
+// failure can still produce a valid frame.
+draw_pass1b :: proc(elapsed: f32) {
+	rl.BeginTextureMode(target)
+	rl.ClearBackground(cfg.scene_bg)
+
+	rl.BeginMode3D(camera)
+	draw_3d_scene(elapsed)
+	draw_drum_3d(term_target.texture)
+	rl.EndMode3D()
+
+	draw_cd_labels()
+
+	// Flat terminal overlay — fades out as the drum tumbles in
+	flat_a := u8(255.0 * flat_visible_alpha())
+	if flat_a > 0 {
+		rl.DrawTextureRec(
+			term_target.texture,
+			{0, 0, f32(window_w), -f32(window_h)},
+			{0, 0},
+			{255, 255, 255, flat_a},
+		)
+	}
+
+	draw_search_overlay()
+	draw_drum_button()
+	draw_sudo_vignette()
+	rl.EndTextureMode()
 }
 
 draw_pass2 :: proc(elapsed_in: f32) {
@@ -446,6 +524,7 @@ draw_pass2 :: proc(elapsed_in: f32) {
 	shake_offset := update_shake(elapsed)
 
 	update_rhythm()
+	update_boot(rl.GetFrameTime())
 
 	rl.BeginDrawing()
 	rl.ClearBackground({0, 0, 0, 0xff})
@@ -463,6 +542,8 @@ draw_pass2 :: proc(elapsed_in: f32) {
 	if tint.a > 0 {
 		rl.DrawRectangle(0, 0, window_w, window_h, tint)
 	}
+	// Boot-up CRT flash on top of everything (no-op after first ~650 ms)
+	draw_boot_overlay()
 	rl.EndDrawing()
 }
 
@@ -471,7 +552,12 @@ draw_pass2 :: proc(elapsed_in: f32) {
 // ---------------------------------------------------------------------------
 
 draw_3d_scene :: proc(t: f32) {
-	// Slow-spinning grid of dim cubes — visible through the translucent terminal bg
+	if shardwall_active {
+		draw_shardwall(t)
+		return
+	}
+
+	// Fallback: slow-spinning grid of dim wireframe cubes (legacy look).
 	fly := cam_fly_intensity()
 	for ix in -3 ..= 3 {
 		for iz in -3 ..= 3 {
@@ -480,11 +566,10 @@ draw_3d_scene :: proc(t: f32) {
 			y := math.sin(t * 0.6 + f32(ix + iz) * 0.8) * 0.4
 
 			base_bright := f32(25 + int(15 * math.sin(t * 0.4 + f32(ix * iz) * 0.3)))
-			// During cd fly, cubes glow much brighter
 			bright := u8(base_bright + fly * (180.0 - base_bright))
-			color := rl.Color{bright, bright, bright + 10, 0xff}
+			color := pwd_tint(rl.Color{bright, bright, bright + 10, 0xff}, cfg.pwd_tint_cube)
 
-			sz := 0.6 + fly * 0.3 // slightly larger during fly
+			sz := 0.6 + fly * 0.3
 			rl.DrawCubeWires({x, y, z}, sz, sz, sz, color)
 		}
 	}
@@ -501,8 +586,10 @@ draw_cell :: proc(col: u16, row: u16, row_cells_h: gvt.Render_State_Row_Cells, c
 	gx, gy := gravity_offset(col, row)
 	ix, iy := idle_drift_offset(col, row)
 	ls_dx, ls_scale := ls_cell_offset(col, row)
-	px := base_x + gx + ix + ls_dx
-	py := base_y + gy + iy
+	sw_dx := shockwave_offset(row)
+	em_dy, em_scale, em_alpha := emerge_offset(row)
+	px := base_x + gx + ix + ls_dx + sw_dx
+	py := base_y + gy + iy + em_dy
 
 	bg_rgb: gvt.Color_Rgb
 	if gvt.render_state_row_cells_get(row_cells_h, .BG_COLOR, &bg_rgb) == .SUCCESS {
@@ -518,6 +605,7 @@ draw_cell :: proc(col: u16, row: u16, row_cells_h: gvt.Render_State_Row_Cells, c
 
 	cp: u32
 	gvt.cell_get(raw_cell, .CODEPOINT, &cp)
+	search_capture_cell(col, row, cp)
 	if cp == 0 || cp < 32 do return
 
 	fg_rgb: gvt.Color_Rgb
@@ -568,7 +656,10 @@ draw_cell :: proc(col: u16, row: u16, row_cells_h: gvt.Render_State_Row_Cells, c
 	if gc, ok := glitch_codepoint(col, row); ok {
 		draw_cp = gc
 	}
-	draw_sz := f32(font_size) * ls_scale
+	draw_sz := f32(font_size) * ls_scale * em_scale
+	if em_alpha < 1.0 {
+		fg_color.a = u8(f32(fg_color.a) * em_alpha)
+	}
 	rl.DrawTextCodepoint(font, draw_cp, {px, py}, draw_sz, fg_color)
 }
 
@@ -616,10 +707,12 @@ apply_font_size :: proc() {
 	rl.UnloadFont(font)
 	load_font()
 
-	// Resize window + render texture
+	// Resize window + render textures
 	rl.SetWindowSize(window_w, window_h)
 	rl.UnloadRenderTexture(target)
 	target = rl.LoadRenderTexture(window_w, window_h)
+	rl.UnloadRenderTexture(term_target)
+	term_target = rl.LoadRenderTexture(window_w, window_h)
 	update_resolution()
 }
 
@@ -629,17 +722,105 @@ update_resolution :: proc() {
 }
 
 // ---------------------------------------------------------------------------
-// Helpers
+// Paste (Ctrl+Shift+V)
 // ---------------------------------------------------------------------------
 
-contains :: proc(s, sub: string) -> bool {
-	if len(sub) > len(s) do return false
-	for i in 0 ..= len(s) - len(sub) {
-		if s[i:i + len(sub)] == sub do return true
+paste_clipboard :: proc() {
+	cstr := rl.GetClipboardText()
+	if cstr == nil do return
+	src := string(cstr)
+	if len(src) == 0 do return
+
+	// paste_encode mutates the data buffer in place; copy first.
+	data_buf := make([]u8, len(src))
+	defer delete(data_buf)
+	copy(data_buf, transmute([]u8)src)
+
+	bracketed := gvt.term_mode_get(&gterm, gvt.MODE_BRACKETED_PASTE)
+
+	// Output adds at most 12 bytes of bracketed-paste wrap; +32 is plenty.
+	out_buf := make([]u8, len(src) + 32)
+	defer delete(out_buf)
+
+	written: c.size_t
+	res := gvt.paste_encode(
+		raw_data(data_buf), c.size_t(len(data_buf)),
+		bracketed,
+		raw_data(out_buf), c.size_t(len(out_buf)),
+		&written,
+	)
+	if res != .SUCCESS || written == 0 do return
+	p.write_bytes(&pty, out_buf[:written])
+}
+
+// ---------------------------------------------------------------------------
+// Hyperlink click-through (OSC 8) — Ctrl+Click
+// ---------------------------------------------------------------------------
+
+// Translate a mouse position to active-screen cell coordinates. Returns false
+// if the position falls outside the terminal grid.
+mouse_to_cell :: proc(mp: rl.Vector2) -> (col: u16, row: u16, ok: bool) {
+	col_f := (mp.x - PADDING) / f32(cell_w)
+	row_f := (mp.y - PADDING) / f32(cell_h)
+	if col_f < 0 || row_f < 0 do return 0, 0, false
+	if col_f >= TERM_COLS || row_f >= TERM_ROWS do return 0, 0, false
+	return u16(col_f), u16(row_f), true
+}
+
+// If the cell under (col, row) carries an OSC 8 hyperlink, return its URI
+// in `buf` and the byte length. Returns ok=false otherwise.
+hyperlink_at :: proc(col, row: u16, buf: []u8) -> (uri: string, ok: bool) {
+	pt := gvt.Point{tag = .ACTIVE, value = {coordinate = {x = col, y = u32(row)}}}
+	ref := gvt.Grid_Ref{size = size_of(gvt.Grid_Ref)}
+	if gvt.terminal_grid_ref(gterm.handle, pt, &ref) != .SUCCESS do return "", false
+
+	out_len: c.size_t
+	res := gvt.grid_ref_hyperlink_uri(&ref, raw_data(buf), c.size_t(len(buf)), &out_len)
+	if res != .SUCCESS || out_len == 0 do return "", false
+	return string(buf[:out_len]), true
+}
+
+handle_hyperlink_click :: proc() {
+	if !rl.IsMouseButtonPressed(.LEFT) do return
+	ctrl := rl.IsKeyDown(.LEFT_CONTROL) || rl.IsKeyDown(.RIGHT_CONTROL)
+	if !ctrl do return
+
+	col, row, ok := mouse_to_cell(rl.GetMousePosition())
+	if !ok do return
+
+	buf: [4096]u8
+	uri, has := hyperlink_at(col, row, buf[:])
+	if !has do return
+	if !uri_scheme_allowed(uri) do return
+	open_url(uri)
+}
+
+// OSC 8 URIs come from terminal output and may be attacker-controlled.
+// Restrict click-through to schemes that xdg-open should reasonably handle
+// for end-user navigation; reject file:, javascript:, data:, and anything
+// else that could turn into local file disclosure or code execution.
+uri_scheme_allowed :: proc(uri: string) -> bool {
+	allowed := []string{"http://", "https://", "mailto:", "ftp://", "ftps://"}
+	for prefix in allowed {
+		if len(uri) >= len(prefix) && uri[:len(prefix)] == prefix do return true
 	}
 	return false
 }
 
-// Color and UTF-8 helpers now live in `ghosdin:render_rl` (`r.to_rl_color`,
-// `r.encode_utf8`); local copies were removed to keep the helpers in one
-// place.
+// Spawn `xdg-open <url>` without going through a shell. posix_spawnp returns
+// immediately; we don't wait for the child (xdg-open backgrounds itself).
+// Inherit the parent environment — xdg-open relies on DISPLAY / WAYLAND_DISPLAY
+// / XDG_* / PATH to locate a browser.
+open_url :: proc(url: string) {
+	url_c, err := strings.clone_to_cstring(url)
+	if err != nil do return
+	defer delete(url_c)
+
+	argv := [3]cstring{"xdg-open", url_c, nil}
+	pid: posix.pid_t
+	posix.posix_spawnp(&pid, "xdg-open", nil, nil, raw_data(&argv), posix.environ)
+}
+
+// Color and UTF-8 helpers live in `ghosdin:render_rl` (`r.to_rl_color`,
+// `r.encode_utf8`). String + command-classification helpers live in
+// `util.odin`.
