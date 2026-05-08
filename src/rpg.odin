@@ -71,6 +71,7 @@ RPG_State :: struct {
 	class_toast_t:     f32,
 	class_toast_text:  [48]u8,
 	class_toast_len:   int,
+	biome_shifted:     bool, // set by Lv 10 biome shift; gates draw_biome_overlay
 }
 
 rpg: RPG_State
@@ -234,7 +235,11 @@ draw_xp_bar :: proc(x, y, w, h: f32, progress: f32) {
 draw_rpg_hud :: proc() {
 	if !rpg_active do return
 
-	// Spell-owned full-screen overlays render first so the HUD pill stays on top.
+	// Permanent biome underlay (post-Lv-10 class-themed border) renders first
+	// so the HUD pill and any flash sits over it.
+	draw_biome_overlay()
+
+	// Spell-owned full-screen overlays render after so the HUD pill stays on top.
 	draw_teleport_flash()
 
 	margin_x: f32 = 12

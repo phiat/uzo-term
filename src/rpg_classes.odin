@@ -24,12 +24,12 @@ Class_Def :: struct {
 @(private = "file") icebreaker_verbs := []string{"rm", "sudo", "doas", "kill", "pkill", "killall", "chmod", "chown"}
 
 class_table := [RPG_Class]Class_Def {
-	.DRIFTER        = {name = "Drifter",        short = "drifter",    biome = {18, 14, 6, 255},  verbs = drifter_verbs},
-	.CONSOLE_COWBOY = {name = "Console Cowboy", short = "cowboy",     biome = {2, 18, 8, 255},   verbs = cowboy_verbs},
-	.SPIDER         = {name = "Spider",         short = "spider",     biome = {12, 4, 18, 255},  verbs = spider_verbs},
-	.TECHNO_WIZARD  = {name = "Techno-Wizard",  short = "wizard",     biome = {18, 4, 14, 255},  verbs = wizard_verbs},
-	.OPERATOR       = {name = "Operator",       short = "operator",   biome = {6, 12, 16, 255},  verbs = operator_verbs},
-	.ICE_BREAKER    = {name = "Ice-Breaker",    short = "icebreaker", biome = {18, 6, 4, 255},   verbs = icebreaker_verbs},
+	.DRIFTER        = {name = "Drifter",        short = "drifter",    biome = {32, 24, 10, 255}, verbs = drifter_verbs},
+	.CONSOLE_COWBOY = {name = "Console Cowboy", short = "cowboy",     biome = {4, 32, 14, 255},  verbs = cowboy_verbs},
+	.SPIDER         = {name = "Spider",         short = "spider",     biome = {22, 8, 32, 255},  verbs = spider_verbs},
+	.TECHNO_WIZARD  = {name = "Techno-Wizard",  short = "wizard",     biome = {32, 8, 24, 255},  verbs = wizard_verbs},
+	.OPERATOR       = {name = "Operator",       short = "operator",   biome = {10, 22, 28, 255}, verbs = operator_verbs},
+	.ICE_BREAKER    = {name = "Ice-Breaker",    short = "icebreaker", biome = {32, 10, 6, 255},  verbs = icebreaker_verbs},
 }
 
 class_name :: proc(c: RPG_Class) -> string {

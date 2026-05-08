@@ -22,4 +22,5 @@ register_biome_shift :: proc "contextless" () {
 @(private = "file")
 cast_biome_shift :: proc() {
 	cfg.scene_bg = biome_for_class(rpg.class)
+	rpg.biome_shifted = true // gates draw_biome_overlay (rpg_biome.odin)
 }
