@@ -51,6 +51,9 @@ RPG_Class :: enum u8 {
 
 @(private = "file") COMMAND_LOG_LEN :: 50
 
+// Phase 2 — skill tree + economy. Fixed at 30 nodes per tree per uzo-ad8.
+SKILL_NODES_PER_TREE :: 30
+
 @(private = "file")
 Command_Tally :: struct {
 	cmd:     [16]u8,
@@ -72,6 +75,13 @@ RPG_State :: struct {
 	class_toast_text:  [48]u8,
 	class_toast_len:   int,
 	biome_shifted:     bool, // set by Lv 10 biome shift; gates draw_biome_overlay
+
+	// Phase 2 (uzo-ad8) — earned 1 per level-up, spent on skill_tree nodes.
+	// allocated[class] is the per-tree bool array (30 nodes, indexed by node id).
+	// Class-starter (id 0) is implicitly allocated and not stored here.
+	skill_points: u16,
+	allocated:    [RPG_Class][SKILL_NODES_PER_TREE]bool,
+	gold:         u32,
 }
 
 rpg: RPG_State
@@ -151,6 +161,7 @@ on_rpg_command :: proc(line: string) {
 check_level_up :: proc() {
 	for rpg.xp >= cumulative_xp(rpg.level + 1) {
 		rpg.level += 1
+		rpg.skill_points += 1
 		trigger_level_up()
 		dispatch_levelup_spells()
 	}
