@@ -16,7 +16,6 @@ package uzo_term
 // at which point Spell.level_required can be supplemented with a node_id
 // gate without breaking existing spells.
 
-import "core:fmt"
 import rl "vendor:raylib"
 
 // ---------------------------------------------------------------------------
@@ -31,6 +30,12 @@ rpg_active: bool = true // default-on; --no-rpg flips, F9 toggles
 @(private = "file") LEVEL_SLOPE         :: 5
 @(private = "file") CLASS_RECHECK_EVERY :: 10
 @(private = "file") CLASS_THRESHOLD     :: f32(0.40)
+
+// Tween durations — set on trigger, decremented in update_rpg, divided by
+// the same constant in draw_rpg_hud to normalize 0..1 progress.
+@(private = "file") LEVEL_UP_FLASH_DURATION :: f32(1.5)
+@(private = "file") CLASS_TOAST_DURATION    :: f32(3.0)
+@(private = "file") CLASS_TOAST_FADE_IN     :: f32(0.85)
 
 // ---------------------------------------------------------------------------
 // Classes (table lives in rpg_classes.odin)
@@ -50,6 +55,9 @@ RPG_Class :: enum u8 {
 // ---------------------------------------------------------------------------
 
 @(private = "file") COMMAND_LOG_LEN :: 50
+
+// Phase 2 — skill tree + economy. Fixed at 30 nodes per tree per uzo-ad8.
+SKILL_NODES_PER_TREE :: 30
 
 @(private = "file")
 Command_Tally :: struct {
@@ -72,6 +80,13 @@ RPG_State :: struct {
 	class_toast_text:  [48]u8,
 	class_toast_len:   int,
 	biome_shifted:     bool, // set by Lv 10 biome shift; gates draw_biome_overlay
+
+	// Phase 2 (uzo-ad8) — earned 1 per level-up, spent on skill_tree nodes.
+	// allocated[class] is the per-tree bool array (30 nodes, indexed by node id).
+	// Class-starter (id 0) is implicitly allocated and not stored here.
+	skill_points: u16,
+	allocated:    [RPG_Class][SKILL_NODES_PER_TREE]bool,
+	gold:         u32,
 }
 
 rpg: RPG_State
@@ -151,6 +166,7 @@ on_rpg_command :: proc(line: string) {
 check_level_up :: proc() {
 	for rpg.xp >= cumulative_xp(rpg.level + 1) {
 		rpg.level += 1
+		rpg.skill_points += 1
 		trigger_level_up()
 		dispatch_levelup_spells()
 	}
@@ -158,12 +174,11 @@ check_level_up :: proc() {
 
 @(private = "file")
 trigger_level_up :: proc() {
-	rpg.level_up_flash_t = 1.5
+	rpg.level_up_flash_t = LEVEL_UP_FLASH_DURATION
 	trigger_shake()
 
-	txt := fmt.bprintf(rpg.level_up_text_buf[:len(rpg.level_up_text_buf) - 1], "LEVEL %d", rpg.level)
-	rpg.level_up_text_len = len(txt)
-	rpg.level_up_text_buf[rpg.level_up_text_len] = 0
+	_, n := fmt_cstr(rpg.level_up_text_buf[:], "LEVEL %d", rpg.level)
+	rpg.level_up_text_len = n
 
 	cx := f32(cursor_x_g) * f32(cell_w) + PADDING + f32(cell_w) * 0.5
 	cy := f32(cursor_y_g) * f32(cell_h) + PADDING + f32(cell_h) * 0.5
@@ -202,11 +217,10 @@ try_reclassify :: proc() {
 	if best == rpg.class do return
 
 	rpg.class = best
-	txt := fmt.bprintf(rpg.class_toast_text[:len(rpg.class_toast_text) - 1],
-		"You have become a %s.", class_name(best))
-	rpg.class_toast_len = len(txt)
-	rpg.class_toast_text[rpg.class_toast_len] = 0
-	rpg.class_toast_t = 3.0
+	record_class_det(best)
+	_, n := fmt_cstr(rpg.class_toast_text[:], "You have become a %s.", class_name(best))
+	rpg.class_toast_len = n
+	rpg.class_toast_t = CLASS_TOAST_DURATION
 }
 
 // ---------------------------------------------------------------------------
@@ -217,7 +231,8 @@ update_rpg :: proc(dt: f32) {
 	if !rpg_active do return
 	if rpg.level_up_flash_t > 0 do rpg.level_up_flash_t -= dt
 	if rpg.class_toast_t > 0 do rpg.class_toast_t -= dt
-	teleport_tick(dt)
+	tick_spells(dt)
+	update_modal(dt)
 }
 
 @(private = "file")
@@ -237,7 +252,7 @@ draw_rpg_hud :: proc() {
 
 	// Spell-owned full-screen overlays render first so the HUD pill stays on top.
 	// (Biome underlay is drawn earlier, in draw_pass1b, so it sits behind cells.)
-	draw_teleport_flash()
+	draw_spells()
 
 	margin_x: f32 = 12
 	margin_y: f32 = 42 // 12 base + 30 lift
@@ -252,16 +267,10 @@ draw_rpg_hud :: proc() {
 
 	have, need := current_level_progress()
 
-	left_buf: [64]u8
-	left_str := fmt.bprintf(left_buf[:len(left_buf) - 1],
-		"Lv %d  %s", rpg.level, class_name(rpg.class))
-	left_buf[len(left_str)] = 0
-	left_cs := cstring(&left_buf[0])
-
+	left_buf:  [64]u8
 	right_buf: [32]u8
-	right_str := fmt.bprintf(right_buf[:len(right_buf) - 1], "%d/%d", have, need)
-	right_buf[len(right_str)] = 0
-	right_cs := cstring(&right_buf[0])
+	left_cs,  _ := fmt_cstr(left_buf[:],  "Lv %d  %s", rpg.level, class_name(rpg.class))
+	right_cs, _ := fmt_cstr(right_buf[:], "%d/%d", have, need)
 
 	font_sz: f32 = 22
 	tcol := rl.Color{cfg.fg_color.r, cfg.fg_color.g, cfg.fg_color.b, 230}
@@ -273,9 +282,9 @@ draw_rpg_hud :: proc() {
 	progress := f32(have) / f32(need)
 	draw_xp_bar(x + 2, y + height - 6, width - 4, 5, progress)
 
-	// Level-up rising 'LEVEL N' text — 1.5s tween rising from cursor.
+	// Level-up rising 'LEVEL N' text — tween rising from cursor.
 	if rpg.level_up_flash_t > 0 && rpg.level_up_text_len > 0 {
-		t := rpg.level_up_flash_t / 1.5
+		t := rpg.level_up_flash_t / LEVEL_UP_FLASH_DURATION
 		eased := 1.0 - t * t
 		rise := 60.0 * eased
 		alpha := u8(t * 255)
@@ -292,10 +301,10 @@ draw_rpg_hud :: proc() {
 		rl.DrawTextEx(font, cs, {px, cy}, size, 1, {255, 240, 120, alpha})
 	}
 
-	// Class toast — 3s, centered horizontally near top third.
+	// Class toast — centered horizontally near top third.
 	if rpg.class_toast_t > 0 && rpg.class_toast_len > 0 {
-		t := rpg.class_toast_t / 3.0
-		alpha_f := t < 0.85 ? t / 0.85 : 1.0
+		t := rpg.class_toast_t / CLASS_TOAST_DURATION
+		alpha_f := t < CLASS_TOAST_FADE_IN ? t / CLASS_TOAST_FADE_IN : 1.0
 		alpha := u8(clamp(alpha_f, 0, 1) * 240)
 
 		cs := cstring(&rpg.class_toast_text[0])

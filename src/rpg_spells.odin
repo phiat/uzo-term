@@ -37,11 +37,22 @@ Spell :: struct {
 	trigger:        Spell_Trigger,
 	match:          Spell_Match,
 	fire:           proc(),
+	// Optional per-frame hooks. Spells with animated overlays (Teleport
+	// flash, Map Pulse ring) set these and avoid central edits in
+	// update_rpg / draw_rpg_hud.
+	tick: proc(dt: f32),
+	draw: proc(),
 	// ON_LEVEL_UP spells should set this true (otherwise they re-fire on every
 	// keypress past the threshold). ON_COMMAND spells can opt in for once-only
 	// behavior. dispatch_levelup_spells force-marks ON_LEVEL_UP fires done as
 	// a safety net so a forgotten one_shot=true can't spam.
-	one_shot:       bool,
+	one_shot: bool,
+	// Phase 2 — skill-tree gate. node_gate == 0 means no gate (existing
+	// behavior); 1..29 = check rpg.class == class_gate AND that node is
+	// allocated. Gating on the starter (id 0) is meaningless, so 0 doubles
+	// as the 'no gate' sentinel without ambiguity.
+	class_gate: RPG_Class,
+	node_gate:  u8,
 	// Runtime state
 	cast_done: bool,
 }
@@ -83,11 +94,19 @@ spell_match_satisfied :: proc(m: Spell_Match, line: string) -> bool {
 	return false
 }
 
+@(private = "file")
+spell_node_gate_satisfied :: proc(s: ^Spell) -> bool {
+	if s.node_gate == 0 do return true
+	if rpg.class != s.class_gate do return false
+	return node_allocated(s.class_gate, s.node_gate)
+}
+
 dispatch_command_spells :: proc(line: string) {
 	for i in 0 ..< spells_count {
 		s := &spells_registry[i]
 		if s.trigger != .ON_COMMAND do continue
 		if rpg.level < s.level_required do continue
+		if !spell_node_gate_satisfied(s) do continue
 		if s.one_shot && s.cast_done do continue
 		if !spell_match_satisfied(s.match, line) do continue
 		s.fire()
@@ -102,8 +121,23 @@ dispatch_levelup_spells :: proc() {
 		s := &spells_registry[i]
 		if s.trigger != .ON_LEVEL_UP do continue
 		if rpg.level < s.level_required do continue
+		if !spell_node_gate_satisfied(s) do continue
 		if s.cast_done do continue
 		s.fire()
 		s.cast_done = true
+	}
+}
+
+// Per-frame fan-out. Called from update_rpg / draw_rpg_hud so individual
+// spell files can opt into animated state without central edits.
+tick_spells :: proc(dt: f32) {
+	for i in 0 ..< spells_count {
+		if t := spells_registry[i].tick; t != nil do t(dt)
+	}
+}
+
+draw_spells :: proc() {
+	for i in 0 ..< spells_count {
+		if d := spells_registry[i].draw; d != nil do d()
 	}
 }

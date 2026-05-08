@@ -21,6 +21,8 @@ register_teleport :: proc "contextless" () {
 		trigger        = .ON_COMMAND,
 		match          = .CD_COMMAND,
 		fire           = cast_teleport,
+		tick           = teleport_tick,
+		draw           = draw_teleport_flash,
 	})
 }
 
@@ -32,10 +34,12 @@ cast_teleport :: proc() {
 	for _ in 0 ..< 24 do emit_rising(.LASER, cx, cy)
 }
 
+@(private = "file")
 teleport_tick :: proc(dt: f32) {
 	if flash_t > 0 do flash_t -= dt
 }
 
+@(private = "file")
 draw_teleport_flash :: proc() {
 	if flash_t <= 0 do return
 	t := flash_t / FLASH_DURATION
