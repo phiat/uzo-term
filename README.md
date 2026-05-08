@@ -15,7 +15,7 @@ A graphical terminal emulator with visual effects and a built-in RPG progression
 
 ## Effects
 
-Boot CRT flash, screen shake, Enter shockwave + glyph explosion, key raindrops, cursor trail + gravity well, typing rhythm warmth, idle drift, line-age decay, character glitch, PWD tint, `cd` fly-through, forge sparks (build), kill smoke, clear whoosh, grep laser sweep, `ls` race-in, sudo vignette, exit doom-drip, alt-screen spinning drum (htop/vim/less), shardwall textured-cube backdrop, shimmer + CRT shader.
+Boot CRT flash, screen shake, Enter shockwave + glyph explosion, key raindrops, cursor trail + gravity well, mouse field (repel-on-motion / attract-on-dwell), typing rhythm warmth, idle drift, line-age decay, character glitch, PWD tint, `cd` fly-through, forge sparks (build), kill smoke, clear whoosh, grep laser sweep, `ls` race-in, sudo vignette, exit doom-drip, alt-screen spinning drum (htop/vim/less), shardwall textured-cube backdrop, shimmer + CRT shader.
 
 ## Input
 
