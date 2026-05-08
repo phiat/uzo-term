@@ -66,6 +66,16 @@ Effect_Config :: struct {
 	mouse_field_attract_radius:   f32,
 	mouse_field_dwell_seconds:    f32,
 	mouse_field_smoothing:        f32, // higher = faster mode flip
+	// Error gutter quake (per-row shake on error keywords at col 0)
+	error_quake_enabled:  bool,
+	error_quake_duration: f32,
+	error_quake_amp:      f32, // pixels
+	error_quake_freq:     f32, // rad/s
+	// Prompt rise (row rises from below after PTY goes quiet)
+	prompt_rise_enabled:    bool,
+	prompt_rise_quiet_secs: f32, // PTY-quiet threshold before firing
+	prompt_rise_duration:   f32,
+	prompt_rise_offset_px:  f32,
 	// Palette
 	term_bg: rl.Color,
 	fg_color: rl.Color,
@@ -125,6 +135,14 @@ init_config :: proc() {
 		mouse_field_attract_radius   = 396.0,
 		mouse_field_dwell_seconds    = 2.0,
 		mouse_field_smoothing        = 2.5,
+		error_quake_enabled  = true,
+		error_quake_duration = 0.30,
+		error_quake_amp      = 4.0,
+		error_quake_freq     = 95.0,
+		prompt_rise_enabled    = true,
+		prompt_rise_quiet_secs = 0.06,
+		prompt_rise_duration   = 0.18,
+		prompt_rise_offset_px  = 30.0,
 		term_bg              = {0x1d, 0x1f, 0x21, 0xe0},
 		fg_color             = {0xc5, 0xc8, 0xc6, 0xff},
 		cursor_color         = {0xc5, 0xc8, 0xc6, 0xcc},
@@ -199,6 +217,12 @@ randomize_config :: proc() {
 	cfg.mouse_field_attract_radius   = rf(180.0, 380.0)
 	cfg.mouse_field_dwell_seconds    = rf(0.8, 2.4)
 	cfg.mouse_field_smoothing        = rf(1.5, 4.0)
+	cfg.error_quake_duration = rf(0.18, 0.55)
+	cfg.error_quake_amp      = rf(2.0, 8.0)
+	cfg.error_quake_freq     = rf(60.0, 140.0)
+	cfg.prompt_rise_quiet_secs = rf(0.04, 0.12)
+	cfg.prompt_rise_duration   = rf(0.12, 0.30)
+	cfg.prompt_rise_offset_px  = rf(14.0, 50.0)
 
 	// Random palette — pick a base hue and derive everything from it
 	hue := rand.float32() * 360.0
@@ -245,6 +269,10 @@ print_config :: proc() {
 		cfg.mouse_field_repel_strength, cfg.mouse_field_repel_radius,
 		cfg.mouse_field_attract_strength, cfg.mouse_field_attract_radius,
 		cfg.mouse_field_dwell_seconds, cfg.mouse_field_smoothing, cfg.mouse_field_enabled)
+	fmt.eprintf("  err-quake: dur=%.2f  amp=%.1f  freq=%.0f  on=%v\n",
+		cfg.error_quake_duration, cfg.error_quake_amp, cfg.error_quake_freq, cfg.error_quake_enabled)
+	fmt.eprintf("  prompt:    rise quiet=%.2f  dur=%.2f  offset=%.0f  on=%v\n",
+		cfg.prompt_rise_quiet_secs, cfg.prompt_rise_duration, cfg.prompt_rise_offset_px, cfg.prompt_rise_enabled)
 	pc :: proc(name: string, c: rl.Color) {
 		fmt.eprintf("  %s: #%02x%02x%02x (a=%02x)\n", name, c.r, c.g, c.b, c.a)
 	}
@@ -267,6 +295,8 @@ print_help :: proc() {
 	fmt.eprintln("  --rpg-reset         Clear RPG state on launch")
 	fmt.eprintln("  --rpg-class=NAME    Pin class: drifter|cowboy|spider|wizard|operator|icebreaker")
 	fmt.eprintln("  --no-mouse-field    Disable mouse repel/attract field")
+	fmt.eprintln("  --no-error-quake    Disable per-row shake on error keywords")
+	fmt.eprintln("  --no-prompt-rise    Disable prompt-rise-from-below effect")
 	fmt.eprintln()
 	fmt.eprintln("Per-param overrides (--name=value):")
 	fmt.eprintln("  shake-duration, shake-intensity")
@@ -319,6 +349,14 @@ parse_config_args :: proc() {
 		}
 		if arg == "--no-mouse-field" {
 			cfg.mouse_field_enabled = false
+			continue
+		}
+		if arg == "--no-error-quake" {
+			cfg.error_quake_enabled = false
+			continue
+		}
+		if arg == "--no-prompt-rise" {
+			cfg.prompt_rise_enabled = false
 			continue
 		}
 		if !strings.has_prefix(arg, "--") {
@@ -392,6 +430,12 @@ parse_config_args :: proc() {
 		case "mouse-field-attract-radius":   if f_ok do cfg.mouse_field_attract_radius   = f32(fval)
 		case "mouse-field-dwell":            if f_ok do cfg.mouse_field_dwell_seconds    = f32(fval)
 		case "mouse-field-smoothing":        if f_ok do cfg.mouse_field_smoothing        = f32(fval)
+		case "error-quake-duration": if f_ok do cfg.error_quake_duration = f32(fval)
+		case "error-quake-amp":      if f_ok do cfg.error_quake_amp      = f32(fval)
+		case "error-quake-freq":     if f_ok do cfg.error_quake_freq     = f32(fval)
+		case "prompt-rise-quiet":    if f_ok do cfg.prompt_rise_quiet_secs = f32(fval)
+		case "prompt-rise-duration": if f_ok do cfg.prompt_rise_duration   = f32(fval)
+		case "prompt-rise-offset":   if f_ok do cfg.prompt_rise_offset_px  = f32(fval)
 		case:
 			fmt.eprintf("unknown effect param: --%s (try --help)\n", name)
 		}

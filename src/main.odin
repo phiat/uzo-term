@@ -234,6 +234,7 @@ pump_pty :: proc() {
 	if len(data) > 0 {
 		gvt.term_write_bytes(&gterm, data)
 		trigger_glitch()
+		on_pty_bytes()
 	}
 	if eof do session_ended = true
 }
@@ -433,6 +434,8 @@ draw_frame :: proc() {
 	dt := rl.GetFrameTime()
 	update_idle()
 	if cfg.mouse_field_enabled do update_mouse_field()
+	update_hyperlink_hover()
+	update_prompt_rise()
 	update_rpg(dt)
 	update_camera_fly()
 	update_pwd_tint(dt)
@@ -471,13 +474,17 @@ draw_frame :: proc() {
 	row_it := gvt.term_render_rows(&gterm)
 	for row in gvt.render_row_next(&row_it) {
 		dirty_row: bool
-		if gvt.render_state_row_get(row_iter_h, .DIRTY, &dirty_row) == .SUCCESS && dirty_row {
+		_ = gvt.render_state_row_get(row_iter_h, .DIRTY, &dirty_row)
+		if dirty_row {
 			mark_row_born(row)
 			mark_ls_row(row)
 			drum_dirty_rows += 1
+			if cfg.error_quake_enabled do quake_scan_reset(row)
+			on_row_dirty_prompt_rise(row)
 		}
 		col_idx: u16 = 0
 		for gvt.render_state_row_cells_next(row_cells_h) {
+			if dirty_row && cfg.error_quake_enabled do quake_scan_cell(row, col_idx, row_cells_h)
 			if row == cursor.y && cursor_row_len < len(cursor_row_buf) - 1 {
 				raw: gvt.Cell
 				if gvt.render_state_row_cells_get(row_cells_h, .RAW, &raw) == .SUCCESS {
@@ -497,6 +504,7 @@ draw_frame :: proc() {
 			draw_cell(col_idx, row, row_cells_h, &colors)
 			col_idx += 1
 		}
+		if dirty_row && cfg.error_quake_enabled do quake_check_row(row)
 	}
 	whoosh_consume()
 	search_scan_rows()
@@ -508,6 +516,7 @@ draw_frame :: proc() {
 		rl.DrawRectangle(i32(cx), i32(cy), cell_w, cell_h, cfg.cursor_color)
 	}
 
+	draw_hyperlink_hover()
 	update_glitch()
 	update_ls_anim()
 	draw_key_drops()
@@ -643,12 +652,18 @@ draw_cell :: proc(col: u16, row: u16, row_cells_h: gvt.Render_State_Row_Cells, c
 	ix, iy := idle_drift_offset(col, row)
 	mfx, mfy: f32
 	if cfg.mouse_field_enabled do mfx, mfy = mouse_field_offset(col, row)
+	eq_dx: f32
+	if cfg.error_quake_enabled do eq_dx = error_quake_offset(row)
+	pr_dy: f32
+	if cfg.prompt_rise_enabled do pr_dy = prompt_rise_offset(row)
 	ls_dx, ls_scale := ls_cell_offset(col, row)
 	sw_dx := shockwave_offset(row)
 	em_dy, em_scale, em_alpha := emerge_offset(row)
 	gx *= scale; gy *= scale
 	ix *= scale; iy *= scale
 	mfx *= scale; mfy *= scale
+	eq_dx *= scale
+	pr_dy *= scale
 	ls_dx *= scale
 	sw_dx *= scale
 	em_dy *= scale
@@ -656,8 +671,8 @@ draw_cell :: proc(col: u16, row: u16, row_cells_h: gvt.Render_State_Row_Cells, c
 	// emerge/ls scaling matches the muted positional offsets.
 	ls_scale = 1.0 + (ls_scale - 1.0) * scale
 	em_scale = 1.0 + (em_scale - 1.0) * scale
-	px := base_x + gx + ix + mfx + ls_dx + sw_dx
-	py := base_y + gy + iy + mfy + em_dy
+	px := base_x + gx + ix + mfx + eq_dx + ls_dx + sw_dx
+	py := base_y + gy + iy + mfy + pr_dy + em_dy
 
 	bg_rgb: gvt.Color_Rgb
 	if gvt.render_state_row_cells_get(row_cells_h, .BG_COLOR, &bg_rgb) == .SUCCESS {
