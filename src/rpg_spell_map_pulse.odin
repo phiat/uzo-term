@@ -25,6 +25,8 @@ register_map_pulse :: proc "contextless" () {
 		trigger        = .ON_COMMAND,
 		match          = .CD_COMMAND,
 		fire           = cast_map_pulse,
+		tick           = map_pulse_tick,
+		draw           = draw_map_pulse,
 		class_gate     = .DRIFTER,
 		node_gate      = 10,          // Cartographer
 	})
@@ -37,10 +39,12 @@ cast_map_pulse :: proc() {
 	pulse_y = f32(cursor_y_g) * f32(cell_h) + PADDING + f32(cell_h) * 0.5
 }
 
+@(private = "file")
 map_pulse_tick :: proc(dt: f32) {
 	if pulse_t > 0 do pulse_t -= dt
 }
 
+@(private = "file")
 draw_map_pulse :: proc() {
 	if pulse_t <= 0 do return
 	t := pulse_t / DURATION                  // 1 → 0
