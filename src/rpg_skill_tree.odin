@@ -39,9 +39,26 @@ Skill_Node_Kind :: enum u8 {
 
 Skill_Payload_Kind :: enum u8 {
 	NONE,
-	STAT_MOD,     // payload_value = scalar (e.g. +0.10 for +10%)
+	STAT_MOD,     // payload_id = Stat_Effect; payload_value = scalar
 	SPELL_UNLOCK, // payload_id = index into spells_registry (Phase 3 wire)
 	ITEM_GRANT,   // payload_id = item table index (Phase 2 step j)
+}
+
+// Tags a STAT_MOD node by which gameplay scalar it tweaks. Adding one is
+// a 3-step task: append here, sum it where the value is read (e.g.
+// idle_drift_mult), tag the relevant Skill_Node payload_id.
+Stat_Effect :: enum u16 {
+	NONE,
+	IDLE_DRIFT_PCT,        // additive % to cfg.idle_drift_max
+	SHAKE_PCT,             // additive % to shake amplitude (negative reduces)
+	GRAVITY_PCT,
+	TRAIL_LIFE_PCT,
+	GOLD_DROP_VALUE_PCT,
+	GOLD_DROP_CHANCE_PCT,
+	XP_PER_CMD_BONUS,      // flat bonus added to XP_PER_ENTER
+	DRUM_DURATION_PCT,
+	XP_GAIN_PCT,           // multiplier applied to all XP earned
+	SEARCH_BRIGHTNESS_PCT,
 }
 
 // Compact node literal — authored once in rpg_tree_<class>.odin.
@@ -104,6 +121,24 @@ allocate_node :: proc(c: RPG_Class, id: u8) -> bool {
 	rpg.allocated[c][id] = true
 	rpg.skill_points -= 1
 	return true
+}
+
+// Sum every allocated STAT_MOD node's payload_value for one Stat_Effect on
+// the player's current class tree. Use this everywhere a scalar tweak
+// reads a config value: e.g. f := cfg.x * (1 + sum_stat_mod(..., .X_PCT)).
+sum_stat_mod :: proc(c: RPG_Class, effect: Stat_Effect) -> f32 {
+	if !rpg_active do return 0
+	sum: f32 = 0
+	tree := &class_trees[c]
+	for nid in 1 ..< SKILL_NODES_PER_TREE {
+		if !tree.defined[nid] do continue
+		if !rpg.allocated[c][nid] do continue
+		n := tree.nodes[nid]
+		if n.payload != .STAT_MOD do continue
+		if Stat_Effect(n.payload_id) != effect do continue
+		sum += n.payload_value
+	}
+	return sum
 }
 
 // Refund a node and any dependents whose only path back to the starter

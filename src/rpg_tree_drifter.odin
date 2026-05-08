@@ -37,16 +37,18 @@ register_drifter_tree :: proc "contextless" () {
 	register_skill_node(C, Skill_Node{
 		id = 1, kind = .SMALL, branch = 0, x = 0, y = -1,
 		prereqs = {0},
-		name    = "Light Step",
-		desc    = "Idle drift amplitude +10%.",
-		payload = .STAT_MOD, payload_value = 0.10,
+		name       = "Light Step",
+		desc       = "Idle drift amplitude +10%.",
+		payload    = .STAT_MOD,
+		payload_id = u16(Stat_Effect.IDLE_DRIFT_PCT), payload_value = 0.10,
 	})
 	register_skill_node(C, Skill_Node{
 		id = 5, kind = .SMALL, branch = 0, x = 0, y = -2,
 		prereqs = {1},
-		name    = "Tread Lightly",
-		desc    = "Idle drift amplitude +10% (stacking).",
-		payload = .STAT_MOD, payload_value = 0.10,
+		name       = "Tread Lightly",
+		desc       = "Idle drift amplitude +10% (stacking).",
+		payload    = .STAT_MOD,
+		payload_id = u16(Stat_Effect.IDLE_DRIFT_PCT), payload_value = 0.10,
 	})
 	register_skill_node(C, Skill_Node{
 		id = 9, kind = .NOTABLE, branch = 0, x = 0, y = -3,
@@ -76,8 +78,10 @@ register_drifter_tree :: proc "contextless" () {
 	register_skill_node(C, Skill_Node{
 		id = 25, kind = .CAPSTONE, branch = 0, x = 0, y = -7,
 		prereqs = {21},
-		name    = "Open Road",
-		desc    = "Idle drift doubled, persistent across the session.",
+		name       = "Open Road",
+		desc       = "Idle drift doubled, persistent across the session.",
+		payload    = .STAT_MOD,
+		payload_id = u16(Stat_Effect.IDLE_DRIFT_PCT), payload_value = 1.0,
 	})
 
 	// ---- EAST branch — Discovery / reveals ----
