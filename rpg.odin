@@ -234,11 +234,12 @@ draw_rpg_hud :: proc() {
 	// Spell-owned full-screen overlays render first so the HUD pill stays on top.
 	draw_teleport_flash()
 
-	margin: f32 = 12
-	width:  f32 = 260
-	height: f32 = 22
-	x := f32(window_w) - width - margin
-	y := f32(window_h) - height - margin
+	margin_x: f32 = 12
+	margin_y: f32 = 42 // 12 base + 30 lift
+	width:    f32 = 520
+	height:   f32 = 44
+	x := f32(window_w) - width - margin_x
+	y := f32(window_h) - height - margin_y
 
 	rl.DrawRectangleRec({x, y, width, height}, {0, 0, 0, 170})
 	rl.DrawRectangleLinesEx({x, y, width, height}, 1,
@@ -257,15 +258,15 @@ draw_rpg_hud :: proc() {
 	right_buf[len(right_str)] = 0
 	right_cs := cstring(&right_buf[0])
 
-	font_sz: f32 = 14
+	font_sz: f32 = 28
 	tcol := rl.Color{cfg.fg_color.r, cfg.fg_color.g, cfg.fg_color.b, 230}
-	rl.DrawTextEx(font, left_cs, {x + 8, y + 4}, font_sz, 1, tcol)
+	rl.DrawTextEx(font, left_cs, {x + 16, y + 8}, font_sz, 2, tcol)
 
-	right_w := rl.MeasureTextEx(font, right_cs, font_sz, 1).x
-	rl.DrawTextEx(font, right_cs, {x + width - right_w - 8, y + 4}, font_sz, 1, tcol)
+	right_w := rl.MeasureTextEx(font, right_cs, font_sz, 2).x
+	rl.DrawTextEx(font, right_cs, {x + width - right_w - 16, y + 8}, font_sz, 2, tcol)
 
 	progress := f32(have) / f32(need)
-	draw_xp_bar(x + 1, y + height - 4, width - 2, 3, progress)
+	draw_xp_bar(x + 2, y + height - 7, width - 4, 6, progress)
 
 	// Level-up rising 'LEVEL N' text — 1.5s tween rising from cursor.
 	if rpg.level_up_flash_t > 0 && rpg.level_up_text_len > 0 {
