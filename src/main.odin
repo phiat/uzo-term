@@ -563,17 +563,20 @@ draw_pass2 :: proc(elapsed_in: f32) {
 // ---------------------------------------------------------------------------
 
 draw_3d_scene :: proc(t: f32) {
-	// While the drum is up, several shardwall cubes (ix=-1,0,1 × iz=2,3)
-	// fall inside or in front of the drum's bounding cylinder and would
-	// occlude it via the depth buffer. Fall back to wireframes — they
-	// don't write opaque depth and the drum reads cleanly.
-	if shardwall_active && drum_t < 0.05 {
+	fly := cam_fly_intensity()
+	// Fall back to wireframes when:
+	//   - drum is up: shardwall cubes occlude the cylinder via the depth buffer
+	//   - cd-fly is active: term_target's bg alpha drops to ~8% so the 3D
+	//     scene shows through — and since the shardwall samples term_target
+	//     as its cube texture, the cubes fade along with the backdrop and
+	//     leave only floating cell glyphs. The wireframe loop below is
+	//     brightness-pumped by fly intensity, so the cubes punch out instead.
+	if shardwall_active && drum_t < 0.05 && fly < 0.05 {
 		draw_shardwall(t)
 		return
 	}
 
 	// Fallback: slow-spinning grid of dim wireframe cubes (legacy look).
-	fly := cam_fly_intensity()
 	for ix in -3 ..= 3 {
 		for iz in -3 ..= 3 {
 			x := f32(ix) * 2.5
