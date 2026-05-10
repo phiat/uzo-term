@@ -24,14 +24,16 @@ Boot CRT flash, screen shake, Enter shockwave + glyph explosion, key raindrops, 
 | Paste | Ctrl+Shift+V (bracketed-paste-aware) |
 | Open OSC 8 hyperlink | Ctrl+Click (https/http/mailto/ftp) |
 | Drum drag / pause | Left-drag while alt-screen / pause button upper-right |
+| Character / class-select modal | F8 |
 | Toggle RPG layer | F9 |
+| Skill-tree overlay | F10 (Enter allocate, R refund, arrows navigate, Esc close) |
 | Font zoom | Ctrl++ / Ctrl+- / Ctrl+0 |
 
 ## RPG layer
 
-Default-on. XP on every char + Enter; class auto-detects from your last 50 commands into one of six Neuromancer/Rifts classes (Drifter, Console Cowboy, Spider, Techno-Wizard, Operator, Ice-Breaker). Curve targets ~Lv 10 in 5 min, ~Lv 100 in ~90 min of normal use. HUD pill in the bottom-right.
+Default-on. XP on every char + Enter; class auto-detects from your last 50 commands into one of six Neuromancer/Rifts classes (Drifter, Console Cowboy, Spider, Techno-Wizard, Operator, Ice-Breaker). Curve targets ~Lv 10 in 5 min, ~Lv 100 in ~90 min of normal use. HUD pill in the bottom-right. F8 opens the character / class-select modal.
 
-Early-level spells: Spark on Command (Lv 2), Teleport (Lv 5, on `cd`), Biome Shift (Lv 10). Phase 2 (planned): per-class skill trees.
+Spells: Spark on Command (Lv 2), Teleport (Lv 5, on `cd`), Biome Shift (Lv 10), Map Pulse (skill-tree gated). Each of the six classes has a 30-node skill tree (F10) — allocate nodes with Enter, refund with R (cascades through dependents).
 
 ## Configuration
 
@@ -40,8 +42,11 @@ just run --rand                       # randomize all effects + palette
 just run --shake-intensity=15
 just run --no-rpg                     # disable RPG layer
 just run --rpg-class=cowboy           # pin a class
+just play cowboy --rand               # shortcut: pin class + randomize
 ./uzo-term_bin --help                 # full flag list
 ```
+
+Class names: `drifter`, `cowboy`, `spider`, `wizard`, `operator`, `icebreaker`.
 
 ## Build
 
@@ -77,10 +82,16 @@ src/
   effects_<feature>.odin  One file per effect (boot, drum, forge, search, …)
   rpg.odin                RPG state + XP/level + HUD
   rpg_classes.odin        Class table
+  rpg_modal.odin          F8 character / class-select modal
+  rpg_items.odin          Item / inventory data
   rpg_spells.odin         Spell struct + registry + dispatcher
   rpg_spell_<name>.odin   One file per spell, self-registers via @(init)
+  rpg_biome.odin          Biome registry + dispatcher
+  rpg_biome_<class>.odin  One file per class biome overlay, self-registers
+  rpg_skill_tree.odin     F10 overlay + node allocation/refund
+  rpg_tree_<class>.odin   30-node tree per class, self-registers each node
 shaders/                  Post-processing GLSL
 docs/                     Design notes
 ```
 
-**Adding a spell**: create one new `src/rpg_spell_<name>.odin`. **Adding a class**: append to the `RPG_Class` enum + `class_table` entry.
+**Adding a spell / biome / skill tree**: drop one new `src/rpg_spell_<name>.odin`, `src/rpg_biome_<class>.odin`, or `src/rpg_tree_<class>.odin` — each self-registers via `@(init)` with no central wiring. **Adding a class**: append to the `RPG_Class` enum in `rpg.odin` AND a matching `Class_Def` row at the same index in `rpg_classes.odin`; biome and tree files are optional. See `AGENTS.md` for the full guide.
